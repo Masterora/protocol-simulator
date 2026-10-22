@@ -1,0 +1,18 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "protocol-simulator",
+  "outputfilename": "protocol-simulator",
+  "frontend:dir": "frontend",
+  "frontend:install": "",
+  "frontend:build": "",
+  "frontend:dev:watcher": "",
+  "author": {
+    "name": "protocol-simulator",
+    "email": ""
+  },
+  "info": {
+    "productName": "protocol-simulator",
+    "productVersion": "1.0.0",
+    "comments": "Go + Wails 协议调试工作台"
+  }
+}

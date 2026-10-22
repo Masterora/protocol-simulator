@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "name": "Modbus 本机工程",
+  "channels": [
+    {
+      "id": "example-server",
+      "name": "Modbus 测试子站",
+      "protocol": "modbus-tcp",
+      "role": "server",
+      "transport": "tcp-server",
+      "address": "127.0.0.1:15020",
+      "localAddress": "",
+      "unit": 1,
+      "commonAddress": 1,
+      "baud": 9600,
+      "parity": "N",
+      "dataBits": 8,
+      "stopBits": 1,
+      "timeoutMs": 3000,
+      "points": [
+        {
+          "address": 0,
+          "kind": "holding",
+          "name": "测试电压",
+          "value": 220,
+          "quality": 0
+        },
+        {
+          "address": 1,
+          "kind": "holding",
+          "name": "测试电流",
+          "value": 12,
+          "quality": 0
+        },
+        {
+          "address": 0,
+          "kind": "coil",
+          "name": "开关状态",
+          "value": 1,
+          "quality": 0
+        }
+      ]
+    },
+    {
+      "id": "example-client",
+      "name": "Modbus 测试主站",
+      "protocol": "modbus-tcp",
+      "role": "client",
+      "transport": "tcp-client",
+      "address": "127.0.0.1:15020",
+      "localAddress": "",
+      "unit": 1,
+      "commonAddress": 1,
+      "baud": 9600,
+      "parity": "N",
+      "dataBits": 8,
+      "stopBits": 1,
+      "timeoutMs": 3000,
+      "points": []
+    }
+  ]
+}

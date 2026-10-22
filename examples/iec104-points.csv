@@ -1,0 +1,4 @@
+address,kind,name,value,quality
+1,yx,开关状态,1,0
+16385,yc,测试电压,220.5,0
+16386,yc,测试电流,12.3,0

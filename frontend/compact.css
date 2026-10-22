@@ -1,0 +1,7 @@
+@media(max-height:800px){
+  main{gap:10px;padding-top:16px}
+  .heading h1{font-size:20px}
+  .points-panel{min-height:140px}
+  .traffic-panel{min-height:150px}
+  .panel-bar{padding-top:9px;padding-bottom:9px}
+}

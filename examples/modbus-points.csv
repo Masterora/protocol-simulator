@@ -1,0 +1,4 @@
+address,kind,name,value,quality
+0,holding,测试电压,220,0
+1,holding,测试电流,12,0
+0,coil,开关状态,1,0

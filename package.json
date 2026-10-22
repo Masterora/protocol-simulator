@@ -1,0 +1,1 @@
+{"name":"gylab-ui-tests","private":true,"type":"module","scripts":{"test:ui":"node --test tests/ui.test.mjs"},"devDependencies":{"happy-dom":"21.0.3"}}

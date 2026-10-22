@@ -1,0 +1,144 @@
+{
+  "version": 2,
+  "name": "自动批量遥控遥调联调",
+  "channels": [
+    {
+      "id": "auto-server",
+      "name": "本机子站",
+      "protocol": "iec104",
+      "role": "server",
+      "transport": "tcp-server",
+      "address": "127.0.0.1:24040",
+      "localAddress": "",
+      "unit": 1,
+      "commonAddress": 1,
+      "baud": 9600,
+      "parity": "N",
+      "dataBits": 8,
+      "stopBits": 1,
+      "timeoutMs": 10000,
+      "devices": [
+        {
+          "id": "server-device",
+          "name": "IEC104测试装置",
+          "unit": 1,
+          "commonAddress": 1,
+          "points": [
+            {
+              "address": 24577,
+              "kind": "yk",
+              "name": "遥控1",
+              "value": 0,
+              "quality": 0
+            },
+            {
+              "address": 24578,
+              "kind": "yk",
+              "name": "遥控2",
+              "value": 0,
+              "quality": 0
+            },
+            {
+              "address": 24833,
+              "kind": "yt",
+              "name": "设值1",
+              "value": 0,
+              "quality": 0
+            },
+            {
+              "address": 24834,
+              "kind": "yt",
+              "name": "设值2",
+              "value": 0,
+              "quality": 0
+            },
+            {
+              "address": 1,
+              "kind": "yx",
+              "name": "位置反馈1",
+              "value": 0,
+              "quality": 0
+            },
+            {
+              "address": 2,
+              "kind": "yx",
+              "name": "位置反馈2",
+              "value": 0,
+              "quality": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "auto-client",
+      "name": "本机主站",
+      "protocol": "iec104",
+      "role": "client",
+      "transport": "tcp-client",
+      "address": "127.0.0.1:24040",
+      "localAddress": "",
+      "unit": 1,
+      "commonAddress": 1,
+      "baud": 9600,
+      "parity": "N",
+      "dataBits": 8,
+      "stopBits": 1,
+      "timeoutMs": 10000,
+      "devices": [
+        {
+          "id": "client-device",
+          "name": "IEC104测试装置",
+          "unit": 1,
+          "commonAddress": 1,
+          "points": [
+            {
+              "address": 24577,
+              "kind": "yk",
+              "name": "遥控1",
+              "value": 0,
+              "quality": 0,
+              "feedback": "1"
+            },
+            {
+              "address": 24578,
+              "kind": "yk",
+              "name": "遥控2",
+              "value": 0,
+              "quality": 0,
+              "feedback": "!2"
+            },
+            {
+              "address": 24833,
+              "kind": "yt",
+              "name": "设值1",
+              "value": 0,
+              "quality": 0
+            },
+            {
+              "address": 24834,
+              "kind": "yt",
+              "name": "设值2",
+              "value": 0,
+              "quality": 0
+            },
+            {
+              "address": 1,
+              "kind": "yx",
+              "name": "位置反馈1",
+              "value": 0,
+              "quality": 0
+            },
+            {
+              "address": 2,
+              "kind": "yx",
+              "name": "位置反馈2",
+              "value": 0,
+              "quality": 0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

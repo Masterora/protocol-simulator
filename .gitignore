@@ -1,0 +1,15 @@
+/build/bin/
+/work/
+/wailsjs/
+/frontend/wailsjs/
+__pycache__/
+*.test.exe
+*.syso
+
+/node_modules/
+/outputs/
+/references/
+/verification/
+/file-manifest.json
+
+.DS_Store
