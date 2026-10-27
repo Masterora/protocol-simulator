@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -226,6 +227,17 @@ func TestNativeWindowSmoke(t *testing.T) {
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
+		if ready && runtime.GOOS == "darwin" {
+			// Inspect the running AppKit process, rather than trusting a static
+			// plist: Wails resets the activation policy during application launch.
+			script := fmt.Sprintf(`ObjC.import('AppKit'); $.NSRunningApplication.runningApplicationWithProcessIdentifier(%d).activationPolicy`, cmd.Process.Pid)
+			policy, policyErr := exec.Command("osascript", "-l", "JavaScript", "-e", script).CombinedOutput()
+			if policyErr != nil || strings.TrimSpace(string(policy)) != "1" {
+				_ = cmd.Process.Kill()
+				t.Fatalf("%s editor still has a Dock icon: policy=%s error=%v", scenario, policy, policyErr)
+			}
+			t.Logf("%s: accessory activation policy verified (no Dock icon)", scenario)
+		}
 		_ = cmd.Process.Kill()
 		select {
 		case <-exited:
@@ -239,6 +251,9 @@ func TestNativeWindowSmoke(t *testing.T) {
 			t.Fatalf("%s native WebView did not finish rendering", kind)
 		}
 		layout := session.layout
+		if kind == "auto-data-dialog" && (layout.DataRuleRows != 0 || !layout.DataAddSymbol) {
+			t.Fatalf("%s must open without rules and expose a symbol add button: %+v", scenario, layout)
+		}
 		if kind == "remote-config-dialog" && c.PointKind == "yt" && layout.ViewportHeight > 440 {
 			t.Fatalf("%s binding editor not compact: %+v", scenario, layout)
 		}

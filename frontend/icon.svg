@@ -1,18 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 256 256">
   <title>protocol-simulator</title>
-  <desc>A structured protocol data frame reporting measurements upward.</desc>
+  <desc>Two packet lanes exchanging data between protocol endpoints.</desc>
   <defs>
     <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
-      <stop stop-color="#26394F" />
-      <stop offset="1" stop-color="#101D2D" />
-    </linearGradient>
-    <linearGradient id="outbound" x1="0" y1="0" x2="1" y2="0">
-      <stop stop-color="#FFAD54" />
-      <stop offset="1" stop-color="#FF7E36" />
-    </linearGradient>
-    <linearGradient id="inbound" x1="0" y1="1" x2="1" y2="0">
-      <stop stop-color="#94C8EB" />
-      <stop offset="1" stop-color="#D9EDFA" />
+      <stop stop-color="#263C55" />
+      <stop offset="1" stop-color="#101C2C" />
     </linearGradient>
   </defs>
   <rect x="12" y="12" width="232" height="232" rx="52" fill="url(#tile)" />
@@ -24,29 +16,24 @@
     rx="51"
     fill="none"
     stroke="#FFFFFF"
-    stroke-opacity=".12"
+    stroke-opacity=".1"
     stroke-width="2"
   />
+  <rect x="48" y="64" width="38" height="42" rx="10" fill="#A9DDF5" />
   <path
-    d="M132 88H70C60.06 88 52 96.06 52 106V182C52 191.94 60.06 200 70 200H142C151.94 200 160 191.94 160 182V170"
+    d="M108 85H202L183 66M202 85L183 104"
     fill="none"
-    stroke="url(#inbound)"
-    stroke-width="13"
+    stroke="#A9DDF5"
+    stroke-width="14"
     stroke-linecap="round"
     stroke-linejoin="round"
   />
+  <rect x="170" y="150" width="38" height="42" rx="10" fill="#FFA352" />
   <path
-    d="M76 116H112M76 144H102M76 172H126"
+    d="M148 171H54L73 152M54 171L73 190"
     fill="none"
-    stroke="url(#inbound)"
-    stroke-width="12"
-    stroke-linecap="round"
-  />
-  <path
-    d="M132 144H168C179.05 144 188 135.05 188 124V60M166 82L188 60L210 82"
-    fill="none"
-    stroke="url(#outbound)"
-    stroke-width="19"
+    stroke="#FFA352"
+    stroke-width="14"
     stroke-linecap="round"
     stroke-linejoin="round"
   />

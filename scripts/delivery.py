@@ -7,6 +7,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 
 NATIVE_SCENARIOS = 25
 SOURCE_DIRS = {"frontend", "internal", "tests", "scripts", "build", "examples", ".github"}
@@ -137,8 +138,7 @@ def copy_user_payload(base, stage, proof, checks):
     shutil.copytree(base / "examples", stage / "examples")
     summary = {"product": "protocol-simulator", "platform": proof["platform"],
                "binarySHA256": proof["binarySHA256"], "sourceFingerprint": proof["sourceFingerprint"],
-               "checks": checks, "windowsNativeRuntimeVerified": proof["platform"] == "windows",
-               "scope": "Local build verification. Company-platform acceptance is separate.",
+               "checks": checks, "windowsNativeRuntimeVerified": proof.get("nativeRuntimeVerified", proof["platform"] == "windows"),
                "additionalBinaries": proof.get("additionalBinaries", {})}
     (stage / "verification").mkdir()
     (stage / "verification/build.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -168,6 +168,54 @@ def preserve_user_files(previous, stage):
         shutil.copy2(path, target)
         preserved.append(destination.as_posix())
     return preserved
+
+
+def remove_legacy_delivery(out):
+    """Remove retired generated files while leaving user edits at their paths."""
+    out = Path(out).resolve()
+    archive = out / "protocol-simulator.zip"
+    if archive.is_symlink():
+        raise ValueError("Refusing to remove linked legacy archive")
+    if archive.is_file():
+        archive.unlink()
+    release = out / "protocol-simulator"
+    manifest = release / "file-manifest.json"
+    if not release.exists():
+        return []
+    if release.is_symlink():
+        raise ValueError("Refusing to clean a linked legacy delivery")
+    if sys.platform == "darwin":
+        commands = subprocess.check_output(["ps", "-axo", "comm="], text=True).splitlines()
+        if any(command.strip().startswith(str(release) + "/") for command in commands):
+            return [str(release)]
+    if not manifest.is_file():
+        return [str(release)]
+    entries = json.loads(manifest.read_text(encoding="utf-8-sig"))
+    if isinstance(entries, list):
+        entries = {entry["path"]: entry for entry in entries}
+    # Validate every path before deleting anything in this directory.
+    for key in entries:
+        path = release / key
+        if not path.resolve().is_relative_to(release.resolve()):
+            raise ValueError("Unsafe legacy delivery manifest path: " + key)
+    for key, entry in entries.items():
+        path = release / key
+        if path.is_file() and not path.is_symlink() and digest(path) == entry["sha256"]:
+            try:
+                path.unlink()
+            except PermissionError:
+                pass  # A running Windows image remains in place until closed.
+    for path in sorted(release.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        if path.is_dir() and not path.is_symlink():
+            try:
+                path.rmdir()
+            except OSError:
+                pass  # Unknown user files keep their directories and paths.
+    remaining = [p for p in release.rglob("*") if p != manifest]
+    if not remaining:
+        manifest.unlink()
+        release.rmdir()
+    return [str(p) for p in remaining if p.is_file() or p.is_symlink()]
 
 
 def main():

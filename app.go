@@ -33,8 +33,11 @@ func (a *App) startup(ctx context.Context) {
 func (a *App) domReady(ctx context.Context) {
 	if a.remote == nil {
 		runtime.WindowCenter(ctx)
-	} else if c, err := a.GetNativeContext(); err == nil && c.Position != nil {
-		runtime.WindowSetPosition(ctx, c.Position.X, c.Position.Y)
+	} else {
+		makeEditorAccessory()
+		if c, err := a.GetNativeContext(); err == nil && c.Position != nil {
+			runtime.WindowSetPosition(ctx, c.Position.X, c.Position.Y)
+		}
 	}
 }
 func (a *App) shutdown(context.Context) {

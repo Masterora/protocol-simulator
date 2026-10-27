@@ -26,6 +26,11 @@ try {
     if ($LASTEXITCODE) { throw 'Packaging checks failed' }
     go test ./... -count=1 -v -timeout=60s > verification/brand-go-tests.txt 2>&1
     if ($LASTEXITCODE) { throw 'Tests failed' }
+    Push-Location (Join-Path $PSScriptRoot 'scripts/windows-resources')
+    try {
+        go test ./... -count=1
+        if ($LASTEXITCODE) { throw 'Windows resource tests failed' }
+    } finally { Pop-Location }
     go vet ./... > verification/vet.txt 2>&1
     if ($LASTEXITCODE) { throw 'go vet failed' }
     go build -tags desktop,production -ldflags '-H windowsgui' -o build/bin/protocol-simulator.exe .

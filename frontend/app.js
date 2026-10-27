@@ -3934,6 +3934,8 @@ async function initializeDesktop() {
           saveButtonBottom,
           editorSaveButtons,
           editorRuntimeButtons,
+          dataRuleRows: dialog.querySelectorAll('#auto-data-rows > tr').length,
+          dataAddSymbol: !!dialog.querySelector('#auto-data-add[aria-label="添加规则"] svg'),
           viewportWidth: innerWidth,
           viewportHeight: innerHeight,
           documentWidth: document.documentElement.scrollWidth,
@@ -4524,33 +4526,16 @@ document.addEventListener('keydown', (e) => {
 // Multi-rule data generation runs in the Go engine; this window only edits and
 // observes its fixed channel/device target.
 let dataEditor = null,
-  dataView = null,
-  dataPollBusy = false,
-  dataLaunchMode = '';
+  dataView = null;
 function dataKinds() {
-  if (dataEditor?.category) {
-    const category = dataEditor.category;
-    if (dataEditor.protocol === 'iec104') return [category];
-    const kinds = [
-      ...new Set(dataEditor.points.filter((p) => dataCategory(p) === category).map((p) => p.kind)),
-    ];
-    return kinds.length ? kinds : [category === 'yx' ? 'discrete' : 'holding'];
-  }
   return dataEditor?.protocol === 'iec104' ? ['yx', 'yc'] : ['discrete', 'holding', 'input'];
-}
-function dataCategory(p) {
-  if (p.tab) return p.tab;
-  if (dataEditor?.protocol === 'iec104') return p.kind;
-  return { discrete: 'yx', holding: 'yc', input: 'yc', coil: 'yk' }[p.kind] || '';
 }
 
 function dataIsBit(kind) {
   return ['yx', 'coil', 'discrete'].includes(kind);
 }
 function newDataRule(kind) {
-  const selected = dataEditor.points.filter(
-      (p) => p.kind === kind && (!dataEditor.category || dataCategory(p) === dataEditor.category),
-    ),
+  const selected = dataEditor.points.filter((p) => p.kind === kind),
     points = selected.map((p) => p.address),
     bit = dataIsBit(kind),
     limits = (selected.length ? selected : [{ kind }]).map((p) =>
@@ -4568,7 +4553,7 @@ function newDataRule(kind) {
     start: points[0] ?? 0,
     end: points[points.length - 1] ?? 0,
     intervalMs: 1000,
-    mode: dataEditor.report ? 'report' : bit ? 'toggle' : max > low ? 'increment' : 'fixed',
+    mode: bit ? 'toggle' : max > low ? 'increment' : 'fixed',
     min: low,
     max,
     step: normalized && !integer ? 0.1 : 1,
@@ -4578,22 +4563,11 @@ function dataRuleTargets(r) {
   const selected = new Set(
     globalThis.pointSelection.parse(r.points, dataEditor.protocol === 'iec104' ? 16777215 : 65535),
   );
-  return dataEditor.points.filter(
-    (p) =>
-      p.kind === r.kind &&
-      (!dataEditor.category || dataCategory(p) === dataEditor.category) &&
-      selected.has(p.address),
-  );
+  return dataEditor.points.filter((p) => p.kind === r.kind && selected.has(p.address));
 }
 function dataRulePoints(r) {
   const points = dataEditor.points
-    .filter(
-      (p) =>
-        p.kind === r.kind &&
-        (!dataEditor.category || dataCategory(p) === dataEditor.category) &&
-        p.address >= r.start &&
-        p.address <= r.end,
-    )
+    .filter((p) => p.kind === r.kind && p.address >= r.start && p.address <= r.end)
     .map((p) => p.address);
   return (
     globalThis.pointSelection.format(points) ||
@@ -4625,7 +4599,7 @@ function dataModeOptions(kind) {
 function renderDataRules(rules) {
   $('auto-data-rows').innerHTML = rules
     .map(
-      (r, index) => `<tr data-data-row="${index}">
+      (r, index) => `<tr data-data-row="${index}" data-data-kind="${escape(r.kind)}">
 <td><input type="checkbox" data-data-field="enabled" aria-label="启用第${index + 1}组" ${r.enabled ? 'checked' : ''}></td>
 <td><select data-data-field="kind" aria-label="数据类型">${dataKinds()
         .map(
@@ -4738,28 +4712,10 @@ function readDataRules(validate = true) {
   });
 }
 
-function dataCall(method, ...args) {
-  const scoped = {
-    GetAutoData: 'GetDataTest',
-    SaveAutoData: 'SaveDataTest',
-    StartAutoData: 'StartDataTest',
-    SetAutoDataState: 'SetDataTestState',
-  };
-  return dataEditor.scope
-    ? api(
-        scoped[method],
-        dataEditor.channel,
-        dataEditor.device,
-        dataEditor.scope || dataEditor.category,
-        ...args,
-      )
-    : api(method, dataEditor.channel, dataEditor.device, ...args);
-}
-async function openAutoDataWindow(mode = '') {
+async function openAutoDataWindow() {
   const c = channel(),
     d = device();
   if (!c || !d || c.role !== 'server') return;
-  dataLaunchMode = '';
   if (nativeDesktop && !nativeContext?.kind) {
     $('auto-data-dialog').show();
     return;
@@ -4767,62 +4723,34 @@ async function openAutoDataWindow(mode = '') {
   await initializeAutoDataWindow({
     channel: c.id,
     device: d.id,
-    pointKind: $('point-kind').value,
-    point: dataLaunchMode,
   });
 }
 async function initializeAutoDataWindow(context) {
   const c = snapshot.project.channels.find((c) => c.id === context.channel),
     d = c?.devices.find((d) => d.id === context.device);
   if (!c || !d) throw Error('自动数据目标已不存在');
-  const category = '',
-    scoped = false,
-    report = false;
   dataEditor = {
     channel: c.id,
     device: d.id,
     protocol: c.protocol,
     points: d.points,
     configuration: d.configuration,
-    category: '',
-    scope: 'telemetry',
-    report: false,
   };
   const title = c.protocol === 'iec104' ? '自动上报配置' : '自动数据配置';
   $('auto-data-dialog').querySelector('.dialog-heading h2').textContent = title;
-  $('auto-data-dialog').dataset.category = dataEditor.category;
-  $('auto-data-dialog').dataset.dataMode = report ? 'report' : 'change';
   $('data-mode-caption').textContent = '方式';
-  $('auto-data-add').textContent = report ? '添加范围' : '添加规则';
-  const view = await dataCall('GetAutoData');
+  const view = await api('GetDataTest', c.id, d.id, 'telemetry');
   if (!view) throw Error('自动数据服务未就绪');
-  $('auto-data-target').textContent = c.name + ' / ' + d.name + (scoped ? ' · ' + title : '');
+  $('auto-data-target').textContent = c.name + ' / ' + d.name;
   $('auto-data-disconnect-label').hidden = c.protocol !== 'iec104';
   $('auto-data-note').textContent = c.protocol === 'iec104' ? '' : '自动更新点值，由主站轮询读取';
   $('auto-data-disconnect').checked = view.config.stopOnDisconnect;
-  let rules = view.config.rules;
-  if (!rules.length) {
-    const preferred = String(context.pointKind || '').replace(/^tab:/, ''),
-      available = dataKinds().filter((kind) => d.points.some((p) => p.kind === kind));
-    available.sort((a, b) => Number(b === preferred) - Number(a === preferred));
-    rules = available.map(newDataRule);
-  }
-  if (!rules.length)
-    rules = [
-      newDataRule(
-        ['yx', 'yc'].includes(String(context.pointKind).replace(/^tab:/, ''))
-          ? String(context.pointKind).replace(/^tab:/, '')
-          : dataKinds()[0],
-      ),
-    ];
-  renderDataRules(rules);
+  renderDataRules(view.config.rules);
   renderDataState(view);
-  dataEditor.initialDraft = view.config.rules.length
-    ? JSON.stringify({
-        rules: readDataRules(false),
-        stopOnDisconnect: $('auto-data-disconnect').checked,
-      })
-    : null;
+  dataEditor.initialDraft = JSON.stringify({
+    rules: readDataRules(false),
+    stopOnDisconnect: $('auto-data-disconnect').checked,
+  });
   $('auto-data-dialog').show();
 }
 function renderDataState(view) {
@@ -4837,15 +4765,6 @@ function renderDataState(view) {
       dataEditor.configuration = target.configuration;
     }
   }
-  /* Runtime indicators live on the four-remote page. */
-  if ($('auto-data-status'))
-    $('auto-data-status').textContent =
-      ({ running: '运行中', paused: '已暂停', stopped: '已停止' }[view.status] || view.status) +
-      (view.lastError ? ' · ' + view.lastError : '');
-  if ($('auto-data-updates'))
-    $('auto-data-updates').textContent =
-      (dataEditor?.report ? '处理点次 ' : '处理点次 ') + view.updates;
-
   updateDataControls();
 }
 function updateDataControls() {
@@ -4896,7 +4815,13 @@ async function saveDataConfiguration() {
   }
   dataEditor.unchanged = false;
   const config = { rules: readDataRules(), stopOnDisconnect: $('auto-data-disconnect').checked };
-  const view = await dataCall('SaveAutoData', config);
+  const view = await api(
+    'SaveDataTest',
+    dataEditor.channel,
+    dataEditor.device,
+    'telemetry',
+    config,
+  );
   renderDataState(view);
   return view;
 }
@@ -4927,6 +4852,7 @@ $('auto-data-rows').addEventListener('change', (e) => {
     const rules = readDataRules(false),
       index = Number(e.target.closest('tr').dataset.dataRow);
     const previous = rules[index],
+      previousDefaults = newDataRule(e.target.closest('tr').dataset.dataKind),
       defaults = newDataRule(e.target.value);
     rules[index] = {
       ...previous,
@@ -4935,6 +4861,10 @@ $('auto-data-rows').addEventListener('change', (e) => {
         ? previous.mode
         : defaults.mode,
     };
+    for (const field of ['min', 'max', 'step']) {
+      if (String(previous[field]) === String(previousDefaults[field]))
+        rules[index][field] = defaults[field];
+    }
     renderDataRules(rules);
   } else updateDataControls();
 });

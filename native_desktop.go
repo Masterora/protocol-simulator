@@ -72,6 +72,8 @@ type nativeLayout struct {
 	QualityCheckboxLeft  bool `json:"qualityCheckboxLeft"`
 	EditorSaveButtons    int  `json:"editorSaveButtons"`
 	EditorRuntimeButtons int  `json:"editorRuntimeButtons"`
+	DataRuleRows         int  `json:"dataRuleRows"`
+	DataAddSymbol        bool `json:"dataAddSymbol"`
 }
 type nativeWindows struct {
 	mu             sync.Mutex

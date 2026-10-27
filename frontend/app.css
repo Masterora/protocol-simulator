@@ -2614,6 +2614,22 @@ body.native-window > dialog.native-content:is(#auto-yk-dialog, #auto-yt-dialog) 
 .data-bottom #auto-data-save {
   margin-left: auto;
 }
+.data-top #auto-data-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+#auto-data-add svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
 .data-table-scroll {
   overflow: auto;
   min-height: 150px;
@@ -2660,31 +2676,9 @@ body.native-window > dialog.native-content:is(#auto-yk-dialog, #auto-yt-dialog) 
 .data-rule-table td:first-child {
   text-align: center;
 }
-#auto-data-dialog[data-category='yx'] .data-rule-table {
-  min-width: 580px;
-}
-#auto-data-dialog[data-category='yx']
-  .data-rule-table
-  :is(th, td):is(:nth-child(2), :nth-child(6), :nth-child(7), :nth-child(8)) {
-  display: none;
-}
-#auto-data-dialog[data-data-mode='report'] .data-rule-table {
-  min-width: 580px;
-}
-#auto-data-dialog[data-data-mode='report']
-  .data-rule-table
-  :is(th, td):is(:nth-child(2), :nth-child(6), :nth-child(7), :nth-child(8)) {
-  display: none;
-}
-.data-options,
-#auto-data-status,
-#auto-data-updates {
+.data-options {
   font-size: 12px;
   color: #aebed1;
-}
-#auto-data-status {
-  max-width: 350px;
-  overflow-wrap: anywhere;
 }
 #auto-data-form .form-error {
   margin: 6px 0;

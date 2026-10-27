@@ -3,7 +3,7 @@
 - The app product name is `protocol-simulator`; executable name is `protocol-simulator.exe`.
 - Keep the dark theme and original GYTest layout and interactions.
 - User override: communication IP and port fields remain editable while connected. Applying changed communication settings stops an active channel, saves and closes the editor; reconnect only when the user manually connects. Stopped channels stay stopped. Validate before disconnecting and preserve device/point data. Communication manager edits channel names and communication parameters inline, without edit buttons or opening another editor. Enter/blur commits once, Escape cancels, polling preserves drafts, and queued edits use the latest configuration. All input and select fields have no native up/down or dropdown arrow decorations, including datalist fields. Numeric inputs have no spinner arrows or arrow-key increments.
-- Canonical development source: the current repository root. Only current delivery: `outputs/protocol-simulator` and `outputs/protocol-simulator.zip`.
+- Canonical development source: the current repository root. Publish only `outputs/protocol-simulator.dmg` and `outputs/protocol-simulator-Setup.exe`; no ZIP or public unpacked application folder. Use temporary staging under `work/`. Setup installs per user, checks/installs WebView2, registers shortcuts and uninstall, refuses to modify a running app, and preserves projects and editable examples. Verify installer payload/resources and the mounted read-only DMG/copied app signature; report Windows runtime acceptance separately. When retiring legacy delivery folders, remove only manifest-matching generated files and preserve user edits at their original paths.
 - After each completed modification, build and verify the executable, embed `build/windows/icon.ico` using `build/windows/resources.ps1`, then replace the current delivery and remove superseded generated application folders, archives and executables. Do not accumulate versioned releases.
 - Preserve original GYTest installations, reverse engineering references, user projects and configurations. Verify absolute paths before recursive deletion. Never delete working source during packaging.
 - Use `scripts/package_protocol.py` to produce and verify the current delivery. Keep source and frontend synchronized with the executable.
@@ -43,3 +43,9 @@
 - Resize the debug panel using an external horizontal separator between messages and debug output, not a native in-panel resize grip. Remember its height; double-click or Home restores 130px. Native popups do not overwrite it. Point badges show current-list point count (for example 50 点), never a misleading count/total fraction; total points remain available in the tooltip.
 
 - Upper-right header displays only the project name and optional （未保存） marker. Do not show a duplicate filename beside it; keep the full saved path in the project-name tooltip.
+
+- New projects and devices start without automatic reporting/data rules. Opening or saving an unchanged empty rule editor must not generate rules or dirty the project. Add rules explicitly using a + symbol button with an accessible label; preserve existing saved rules.
+
+- Use frontend/icon.svg as the single source for application icons on all platforms. macOS editor processes use accessory activation policy after Wails launch, so configuration windows do not add Dock icons; independent main project windows retain normal app activation.
+
+- Keep wails.json info.productVersion as the only application version source. Windows builds share scripts/windows-resources; resources.ps1 is its native build wrapper. Keep app and mounted DMG volume icons embedded, and apply the DMG file icon as macOS metadata.

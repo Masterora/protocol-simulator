@@ -8,7 +8,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from delivery import (NATIVE_SCENARIOS, check_logs, copy_user_payload, digest,
-                      preserve_user_files, source_hashes, verify_current_build, verify_licenses, license_sections)
+                      preserve_user_files, remove_legacy_delivery, source_hashes, verify_current_build, verify_licenses, license_sections)
 
 
 class DeliveryTests(unittest.TestCase):
@@ -146,6 +146,50 @@ class DeliveryTests(unittest.TestCase):
         runtime.mkdir(parents=True)
         (runtime / "runtime.js").write_text("generated code")
         self.assertEqual(source_hashes(self.base), before)
+
+    def test_retired_delivery_removes_only_unchanged_generated_files(self):
+        out = self.base / "outputs"
+        previous = out / "protocol-simulator"
+        previous.mkdir(parents=True)
+        generated = previous / "protocol-simulator.exe"
+        modified = previous / "example.json"
+        generated.write_bytes(b"generated app")
+        modified.write_text("generated example")
+        manifest = {p.name: {"sha256": digest(p)} for p in (generated, modified)}
+        (previous / "file-manifest.json").write_text(json.dumps(manifest))
+        modified.write_text("user edits")
+        project = previous / "工程.json"
+        project.write_text("user project")
+        archive = out / "protocol-simulator.zip"
+        archive.write_bytes(b"old ZIP")
+        retained = remove_legacy_delivery(out)
+        self.assertFalse(generated.exists())
+        self.assertFalse(archive.exists())
+        self.assertEqual(modified.read_text(), "user edits")
+        self.assertEqual(project.read_text(), "user project")
+        self.assertIn(str(project.resolve()), retained)
+        self.assertIn(str(modified.resolve()), retained)
+
+    def test_clean_retired_delivery_has_no_public_unpacked_copy(self):
+        out = self.base / "outputs"
+        previous = out / "protocol-simulator"
+        previous.mkdir(parents=True)
+        app = previous / "app.exe"
+        app.write_bytes(b"generated app")
+        (previous / "file-manifest.json").write_text(json.dumps({"app.exe": {"sha256": digest(app)}}))
+        self.assertEqual(remove_legacy_delivery(out), [])
+        self.assertFalse(previous.exists())
+
+    def test_retired_manifest_cannot_delete_outside_its_directory(self):
+        out = self.base / "outputs"
+        previous = out / "protocol-simulator"
+        previous.mkdir(parents=True)
+        project = out / "user.json"
+        project.write_text("user project")
+        (previous / "file-manifest.json").write_text(json.dumps({"../user.json": {"sha256": digest(project)}}))
+        with self.assertRaisesRegex(ValueError, "Unsafe legacy"):
+            remove_legacy_delivery(out)
+        self.assertEqual(project.read_text(), "user project")
 
 
 if __name__ == "__main__":

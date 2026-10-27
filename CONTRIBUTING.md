@@ -6,7 +6,8 @@
 
 - Go 1.25+、Node.js 22+、Python 3.9+。
 - macOS：Xcode 或 Command Line Tools，以及可登录的桌面会话。
-- Windows：Windows 10/11 x64、WebView2、PowerShell，打包需 `python -m pip install pefile`。
+- Windows：Windows 10/11 x64、WebView2、PowerShell。
+- Windows Setup 打包另需 NSIS 3.13 和 7-Zip。macOS 可用 `brew install makensis sevenzip`；Windows 安装 NSIS 和 7-Zip。工具未加入 PATH 时可设置 `MAKENSIS`、`SEVENZIP` 为可执行文件路径。WebView2 官方引导程序首次构建时下载并缓存到 `work/installer-runtime/`；Windows 构建还会验证其微软 Authenticode 签名。
 - 重新生成图标时另需 `resvg-py` 和 `Pillow`；日常构建使用已有图标。
 
 ## 开发检查
@@ -20,7 +21,7 @@ go test ./... -count=1
 go vet ./...
 ```
 
-`npm run format` 统一源码格式。CI 在 macOS、Windows 上执行上述检查，macOS 另做竞态检查。
+`npm run format` 统一源码格式。CI 覆盖上述检查，macOS 另做竞态检查；Windows 另验证 Setup 的安装、启动、升级和卸载。
 
 ## 生成交付包
 
@@ -40,11 +41,23 @@ npm ci
 python scripts/package_protocol.py
 ```
 
-构建脚本执行协议、界面、打包及原生窗口检查，记录源码、二进制和日志身份。macOS 还检查串口 PTY、竞态和 Windows 交叉构建；Windows 使用 `build/windows/resources.ps1` 写入资源。原生检查覆盖25个有效场景，合并窗口的历史入口不重复测试。
+构建脚本执行协议、界面、打包及原生窗口检查，记录源码、二进制和日志身份。macOS 还检查串口 PTY、竞态和 Windows 交叉构建；Windows 使用 `build/windows/resources.ps1` 调用与 macOS 交叉构建共用的资源工具。版本号仅在 `wails.json` 的 `info.productVersion` 中维护，应用元数据、Windows 数字/字符串版本、清单和 Setup 均由此生成。原生检查覆盖25个有效场景，合并窗口的历史入口不重复测试。
 
-唯一当前交付为 `outputs/protocol-simulator/` 和 `outputs/protocol-simulator.zip`。`scripts/package_protocol.py` 校验当前构建后打包；完整记录保存在本地 `verification/`，不混入普通交付。应用包包含用户指南、小型示例、完整许可正文和构建摘要。
+`outputs/` 只发布两个安装包：macOS 的 `protocol-simulator.dmg` 和 Windows 的 `protocol-simulator-Setup.exe`。macOS 镜像包含 Universal `.app` 和 Applications 快捷入口；指南、示例、许可和构建摘要位于“资料”文件夹。暂存文件位于 `work/`，打包完成后清理。
 
-用户新增或修改的交付文件放入 `保留文件/`，以后更新继续保留。原版 GYTest、参考资料、用户工程和工作区外文件不参与清理。
+`scripts/package_protocol.py` 校验当前构建后打包。NSIS 安装器按用户安装，在改动应用前检测 WebView2；已有应用运行或依赖安装失败时退出。升级保留已有示例，卸载只清理明确的程序文件，不递归删除安装目录，也不移除 WebView2 共享运行时。打包后用 7-Zip 解包核对程序和引导程序哈希，并验证安装器的图标、版本资源。安装器当前未做 Authenticode 签名。
+
+macOS 使用 `hdiutil` 生成只读 DMG，验证校验和、挂载内容、快捷入口、可执行权限及复制安装后的签名。应用和挂载卷内嵌品牌图标；DMG 文件本身的自定义图标使用 macOS 扩展属性，经下载或不保留元数据的复制后可能恢复系统磁盘图标。Setup 和 DMG 都通过验证后才发布；详细记录位于 `verification/`。
+
+在没有本软件安装记录的专用 Windows 测试账户中验证安装、启动、运行中拒绝升级/卸载、覆盖升级与工程保留：
+
+```powershell
+.\tests\windows_installer_smoke.ps1 -Setup outputs\protocol-simulator-Setup.exe -Application build\bin\protocol-simulator.exe
+```
+
+测试运行前会拒绝修改已有安装和快捷方式；成功后写入 `verification/windows-installer-runtime.json`。安装包交叉编译或解包成功不代表这项 Windows 实机验收已通过。
+
+迁移旧交付目录时，只删除与原文件清单哈希一致的生成文件，用户新增或修改的文件保留原位。原版 GYTest、参考资料、用户工程和工作区外文件不参与清理。
 
 ## 规模与验证边界
 
@@ -61,4 +74,4 @@ IEC104 工程档为64通道、640000点；Modbus 档为2通道、254装置、254
 
 普通 `go test` 跳过需要桌面的原生检查；构建脚本通过 `GYLAB_NATIVE_SMOKE_BINARY` 启用。Windows 交叉编译不代表其原生界面通过，macOS Universal 包的运行结论以实际测试架构为准，串口 PTY 不代替物理 RS-485。
 
-公司平台需另行核对可回连的 IP、已下发配置、IEC104 激活、命令确认、绑定反馈和属性回读。本地或 CI 通过不会改变历史实网测试中的未解决问题。
+实网验收需核对可回连的 IP、平台配置、IEC104 激活、命令确认、绑定反馈和属性回读。

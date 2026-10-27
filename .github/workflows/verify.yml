@@ -31,8 +31,29 @@ jobs:
       - run: npm run test:ui
       - run: python -m unittest discover -s tests -p "test_*.py" -v
       - run: go test ./... -count=1 -timeout=120s
+      - run: go test ./... -count=1
+        working-directory: scripts/windows-resources
       - run: go vet ./...
       - if: runner.os == 'macOS'
         run: go test -race ./internal/core -count=1 -timeout=120s
       - if: runner.os == 'Windows'
         run: go build -tags desktop,production -ldflags "-H windowsgui" -o build/bin/protocol-simulator.exe .
+      - if: runner.os == 'Windows'
+        uses: nsis-dev/setup-nsis@99783963764acafc24a5e3335ddfce26d03c20a2 # v1.2.1
+        with:
+          version: '3.13'
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./build/windows/resources.ps1 -Executable build/bin/protocol-simulator.exe
+          New-Item -ItemType Directory -Path work/installer-ci, verification -Force | Out-Null
+          Copy-Item build/bin/protocol-simulator.exe, README.md, THIRD-PARTY.txt -Destination work/installer-ci
+          Copy-Item examples -Destination work/installer-ci/examples -Recurse
+          python scripts/windows_installer.py --payload work/installer-ci --output work/protocol-simulator-Setup.exe
+          if ($LASTEXITCODE) { throw 'Windows installer build failed' }
+      - name: Verify Windows install, upgrade and uninstall
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./tests/windows_installer_smoke.ps1 -Setup work/protocol-simulator-Setup.exe -Application build/bin/protocol-simulator.exe

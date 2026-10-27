@@ -164,9 +164,33 @@ function dataState() {
     lastError: '',
   };
 }
-async function setupData(protocol = 'iec104', native = false) {
+function configuredDataRules(protocol = 'iec104') {
+  return (protocol === 'iec104' ? ['yc', 'yx'] : ['holding']).map((kind) => ({
+    enabled: true,
+    kind,
+    points: kind === 'yc' ? '10-11' : kind === 'yx' ? '1' : '0',
+    intervalMs: 1000,
+    mode: kind === 'yx' ? 'toggle' : 'increment',
+    min: 0,
+    max: kind === 'yx' ? 1 : 100,
+    step: 1,
+  }));
+}
+function addTelemetryRule(h, kind, points) {
+  h.$('auto-data-add').click();
+  const select = h.$('auto-data-rows').lastElementChild.querySelector('[data-data-field=kind]');
+  select.value = kind;
+  select.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  h.$('auto-data-rows').lastElementChild.querySelector('[data-data-field=points]').value = points;
+}
+async function setupData(
+  protocol = 'iec104',
+  native = false,
+  rules = configuredDataRules(protocol),
+) {
   const c = dataServer(protocol),
     view = dataState();
+  view.config.rules = structuredClone(rules);
   const h = await setup(
     {
       project: { name: 'data', channels: [c] },
@@ -216,6 +240,56 @@ async function setupData(protocol = 'iec104', native = false) {
   }
   return { ...h, view };
 }
+test('new workspaces keep rules empty across protocols, save and reopen without writing defaults', async () => {
+  for (const protocol of ['iec104', 'modbus-tcp', 'modbus-rtu']) {
+    for (const native of [false, true]) {
+      const h = await setupData(protocol, native, []);
+      try {
+        const add = h.$('auto-data-add');
+        assert.equal(h.$('auto-data-rows').children.length, 0);
+        assert.equal(add.textContent.trim(), '');
+        assert.equal(add.getAttribute('aria-label'), '添加规则');
+        assert.equal(add.getAttribute('title'), '添加规则');
+        assert.ok(add.querySelector('svg[aria-hidden=true]'));
+        h.$('auto-data-save').click();
+        await settleInline();
+        assert.equal(
+          h.calls.some((c) => c[0] === 'SaveDataTest'),
+          false,
+        );
+        await h.w.eval('initializeAutoDataWindow')({
+          channel: 'data',
+          device: 'target',
+          pointKind: 'yx',
+        });
+        assert.equal(h.$('auto-data-rows').children.length, 0);
+        add.click();
+        const row = h.$('auto-data-rows').firstElementChild;
+        assert.equal(h.$('auto-data-rows').children.length, 1);
+        assert.equal(row.querySelector('[data-data-field=points]').value, '');
+        row.querySelector('[data-data-field=points]').value = protocol === 'iec104' ? '1' : '0';
+        if (protocol !== 'iec104') {
+          const kind = row.querySelector('[data-data-field=kind]');
+          kind.value = 'holding';
+          kind.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+        }
+        h.$('auto-data-save').click();
+        await settleInline();
+        assert.equal(h.view.config.rules.length, 1);
+        await h.w.eval('initializeAutoDataWindow')({ channel: 'data', device: 'target' });
+        assert.equal(h.$('auto-data-rows').children.length, 1);
+        h.$('auto-data-rows').querySelector('[data-data-remove]').click();
+        h.$('auto-data-save').click();
+        await settleInline();
+        assert.equal(h.view.config.rules.length, 0);
+        await h.w.eval('initializeAutoDataWindow')({ channel: 'data', device: 'target' });
+        assert.equal(h.$('auto-data-rows').children.length, 0);
+      } finally {
+        await h.close();
+      }
+    }
+  }
+});
 test('automatic data supports several data types and independent periods in one configuration', async () => {
   const h = await setupData();
   try {
@@ -250,6 +324,7 @@ test('automatic data configuration stays editable while running and only saves',
     h.view.status = 'running';
     h.w.eval('renderDataState')(structuredClone(h.view));
     assert.equal(h.$('auto-data-rows').querySelector('[data-data-field=min]').disabled, false);
+    h.$('auto-data-rows').querySelector('[data-data-field=intervalMs]').value = '1200';
     for (const id of ['auto-data-start', 'auto-data-pause', 'auto-data-stop'])
       assert.equal(h.$(id), null);
     h.$('auto-data-form').requestSubmit(h.$('auto-data-save'));
@@ -301,6 +376,13 @@ test('one device configuration and toggle operate mixed telemetry rules across b
   for (const protocol of ['iec104', 'modbus-tcp']) {
     const c = dataServer(protocol),
       view = dataState();
+    view.config.rules = configuredDataRules();
+    if (protocol !== 'iec104') {
+      view.config.rules[0].kind = 'holding';
+      view.config.rules[0].points = '0';
+      view.config.rules[1].kind = 'discrete';
+      view.config.rules[1].points = '10';
+    }
     if (protocol !== 'iec104')
       c.devices[0].points.push({ kind: 'discrete', tab: 'yx', address: 10, value: 0, quality: 0 });
     const overrides = {
@@ -389,7 +471,7 @@ test('legacy native telemetry launch contexts open the same combined editor', as
     try {
       await settleInline();
       assert.equal(h.$('auto-data-dialog').open, true);
-      assert.equal(h.$('auto-data-rows').children.length, 2);
+      assert.equal(h.$('auto-data-rows').children.length, 0);
       assert.match(h.$('auto-data-dialog').querySelector('h2').textContent, /自动上报配置/);
       assert.equal(h.$('auto-data-start'), null);
     } finally {
@@ -450,6 +532,19 @@ test('newly added devices expose one automatic reporting editor for all telemetr
     assert.equal(h.$('open-report-data'), null);
     h.$('open-auto-data').click();
     await settleInline();
+    assert.equal(h.$('auto-data-rows').children.length, 0);
+    for (const [kind, points] of [
+      ['yx', '1-50'],
+      ['yc', '16385-16434'],
+    ]) {
+      h.$('auto-data-add').click();
+      const row = h.$('auto-data-rows').lastElementChild;
+      const select = row.querySelector('[data-data-field=kind]');
+      select.value = kind;
+      select.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+      h.$('auto-data-rows').lastElementChild.querySelector('[data-data-field=points]').value =
+        points;
+    }
     const rows = [...h.$('auto-data-rows').children];
     assert.deepEqual(
       rows.map((r) => r.querySelector('[data-data-field=kind]').value),
@@ -3789,6 +3884,8 @@ test('combined automatic reporting modes offer background and YC periodic causes
     h.w.document.querySelector('[data-mode=server]').click();
     h.$('open-auto-data').click();
     await settleInline();
+    addTelemetryRule(h, 'yx', '1');
+    addTelemetryRule(h, 'yc', '10-11');
     const rows = [...h.$('auto-data-rows').children];
     for (const row of rows) {
       const kind = row.querySelector('[data-data-field=kind]').value,
@@ -3968,7 +4065,7 @@ test('device first point and count drafts survive protocol switches', async () =
   }
 });
 
-test('sparse timed report defaults and legacy wide ranges retain high point numbers', async () => {
+test('explicit sparse timed reports and legacy wide ranges retain high point numbers', async () => {
   for (const legacy of [false, true]) {
     const c = dataServer();
     c.devices[0].points = [
@@ -4008,6 +4105,10 @@ test('sparse timed report defaults and legacy wide ranges retain high point numb
       h.w.document.querySelector('[data-point-kind=yx]').click();
       h.$('open-auto-data').click();
       await settleInline();
+      if (!legacy) {
+        assert.equal(h.$('auto-data-rows').children.length, 0);
+        addTelemetryRule(h, 'yx', '1，3-4，100000');
+      }
       const row = h.$('auto-data-rows').firstElementChild;
       assert.equal(row.querySelector('[data-data-field=points]').value, '1，3-4，100000');
       assert.equal(row.querySelector('[data-data-field=end]'), null);
@@ -4142,7 +4243,7 @@ test('multiple manual controls require every selection confirmation and allow ca
   }
 });
 
-test('automatic telemetry defaults fit all IEC104 formats including untagged legacy points', async () => {
+test('explicit new telemetry rules fit all IEC104 formats including untagged legacy points', async () => {
   for (const type of [9, 11, 13, 21, 34, 35, 36]) {
     const c = dataServer();
     c.devices[0].configuration = {
@@ -4170,6 +4271,8 @@ test('automatic telemetry defaults fit all IEC104 formats including untagged leg
     );
     try {
       await settleInline();
+      assert.equal(h.$('auto-data-rows').children.length, 0);
+      addTelemetryRule(h, 'yc', '10-11');
       const row = h.$('auto-data-rows').firstElementChild,
         get = (k) => row.querySelector('[data-data-field=' + k + ']'),
         normalized = [9, 21, 34].includes(type);
@@ -4209,6 +4312,7 @@ test('normalized limit errors identify the field and point before sending config
   );
   try {
     await settleInline();
+    addTelemetryRule(h, 'yc', '10-11');
     const max = h.$('auto-data-rows').querySelector('[data-data-field=max]');
     max.value = '1';
     h.$('auto-data-save').click();
@@ -4297,9 +4401,11 @@ test('empty point tables do not prefill an unconfigured point zero', async () =>
     h.w.document.querySelector('[data-point-kind=yc]').click();
     h.$('open-auto-data').click();
     await settleInline();
+    assert.equal(h.$('auto-data-rows').children.length, 0);
+    addTelemetryRule(h, 'yc', '');
     const row = h.$('auto-data-rows').firstElementChild;
     assert.equal(row.querySelector('[data-data-field=points]').value, '');
-    assert.equal(row.querySelector('[data-data-field=enabled]').checked, false);
+    assert.equal(row.querySelector('[data-data-field=enabled]').checked, true);
     assert.equal(row.querySelector('[data-data-field=max]').value, '0.9');
     h.$('auto-data-dialog').close();
   } finally {
