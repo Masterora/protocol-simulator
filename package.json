@@ -1,1 +1,17 @@
-{"name":"gylab-ui-tests","private":true,"type":"module","scripts":{"test:ui":"node --test tests/ui.test.mjs"},"devDependencies":{"happy-dom":"21.0.3"}}
+{
+  "name": "protocol-simulator",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:ui": "node --test tests/ui.test.mjs",
+    "format": "prettier --write \"frontend/*.{js,css,html,svg}\" \"tests/*.mjs\" README.md CONTRIBUTING.md package.json .prettierrc.json \".github/workflows/*.yml\"",
+    "check": "prettier --check \"frontend/*.{js,css,html,svg}\" \"tests/*.mjs\" README.md CONTRIBUTING.md package.json .prettierrc.json \".github/workflows/*.yml\""
+  },
+  "devDependencies": {
+    "happy-dom": "21.0.3",
+    "prettier": "3.9.10"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

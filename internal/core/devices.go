@@ -29,6 +29,7 @@ func (e *Engine) Device(channelID, deviceID string) (Device, error) {
 			copy.Points = append([]Point{}, d.Points...)
 			copy.Configuration = cloneConfiguration(d.Configuration)
 			copy.AutoData = cloneAutoData(d.AutoData)
+			copy.DataTests = cloneDataTests(d.DataTests)
 			return copy, nil
 		}
 	}
@@ -43,6 +44,7 @@ func (e *Engine) devices(channelID string) []Device {
 			for i := range list {
 				list[i].Points = nil
 				list[i].AutoData = cloneAutoData(list[i].AutoData)
+				list[i].DataTests = cloneDataTests(list[i].DataTests)
 			}
 			return list
 		}
@@ -84,6 +86,7 @@ func (e *Engine) UpsertDevice(channelID, protocol string, d Device, replace bool
 		d.Name = strings.TrimSpace(d.Name)
 		d.Configuration = cloneConfiguration(d.Configuration)
 		d.AutoData = cloneAutoData(d.AutoData)
+		d.DataTests = cloneDataTests(d.DataTests)
 		if d.ID == "" {
 			d.ID = newID()
 			points, err := configuredPoints(protocol, d.Configuration, nil)
@@ -97,8 +100,20 @@ func (e *Engine) UpsertDevice(channelID, protocol string, d Device, replace bool
 			if err != nil {
 				return "", err
 			}
+			if d.Configuration != nil && d.Configuration.Relations == nil && old.Configuration != nil {
+				d.Configuration.Relations = cloneRelations(old.Configuration.Relations)
+			}
+			if d.Configuration != nil && d.Configuration.Controls == nil && old.Configuration != nil {
+				d.Configuration.Controls = cloneConfiguration(old.Configuration).Controls
+			}
+			if d.Configuration != nil && d.Configuration.AutoTests == nil && old.Configuration != nil {
+				d.Configuration.AutoTests = cloneConfiguration(old.Configuration).AutoTests
+			}
 			if d.AutoData == nil {
 				d.AutoData = cloneAutoData(old.AutoData)
+			}
+			if d.DataTests == nil {
+				d.DataTests = cloneDataTests(old.DataTests)
 			}
 			if d.Configuration == nil {
 				d.Configuration = cloneConfiguration(old.Configuration)
@@ -138,6 +153,9 @@ func (e *Engine) UpsertDevice(channelID, protocol string, d Device, replace bool
 			return "", fmt.Errorf("装置配置无效（请同时检查通信配置）：%w", err)
 		}
 		configurationChanged := d.ID != "" && !reflect.DeepEqual(existing.Devices, c.Devices)
+		if existing.Protocol == c.Protocol && !configurationChanged && !replace104 {
+			return d.ID, nil
+		}
 		if (replace104 || existing.Protocol != c.Protocol || configurationChanged) && e.running[channelID] != nil {
 			e.mu.Unlock()
 			e.stopLocked(channelID)
@@ -150,11 +168,15 @@ func (e *Engine) UpsertDevice(channelID, protocol string, d Device, replace bool
 		e.cancelDataLocked(channelID, d.ID)
 		e.project.Version = 2
 		e.dirty = true
+		e.markConfigurationLocked()
 		return d.ID, nil
 	}
 	return "", errors.New("通道不存在")
 }
 func (e *Engine) DeleteDevice(channelID, deviceID string) error {
+	return e.deleteDevice(channelID, deviceID, false)
+}
+func (e *Engine) deleteDevice(channelID, deviceID string, disconnect bool) error {
 	e.op.Lock()
 	defer e.op.Unlock()
 	e.mu.Lock()
@@ -168,7 +190,7 @@ func (e *Engine) DeleteDevice(channelID, deviceID string) error {
 			if d.ID == deviceID {
 				e.cancelDataLocked(channelID, deviceID)
 				last := len(c.Devices) == 1
-				if last && e.running[channelID] != nil {
+				if (last || disconnect) && e.running[channelID] != nil {
 					e.mu.Unlock()
 					e.stopLocked(channelID)
 					e.mu.Lock()
@@ -179,6 +201,7 @@ func (e *Engine) DeleteDevice(channelID, deviceID string) error {
 				}
 				c.syncLegacy()
 				e.dirty = true
+				e.markConfigurationLocked()
 				return nil
 			}
 		}
@@ -206,11 +229,15 @@ func (e *Engine) RenameDevice(channelID, deviceID, name string) error {
 		}
 		d.Name = name
 		e.dirty = true
+		e.markConfigurationLocked()
 		return nil
 	}
 	return errors.New("通道不存在")
 }
 func (e *Engine) SetDevicePoints(channelID, deviceID string, points []Point) error {
+	return e.setDevicePoints(channelID, deviceID, points, false)
+}
+func (e *Engine) setDevicePoints(channelID, deviceID string, points []Point, disconnect bool) error {
 	e.op.Lock()
 	defer e.op.Unlock()
 	e.mu.Lock()
@@ -224,13 +251,22 @@ func (e *Engine) SetDevicePoints(channelID, deviceID string, points []Point) err
 		if err != nil {
 			return err
 		}
-		if err = validatePoints(points, c.Protocol); err != nil {
+		if err = validateDevicePointTable(*c, *d, points); err != nil {
 			return err
+		}
+		candidate := *d
+		candidate.Points = points
+		if err := validateRemoteReferences(*c, candidate); err != nil {
+			return err
+		}
+		if disconnect && !reflect.DeepEqual(d.Points, points) {
+			e.disconnectConfigurationLocked(channelID)
 		}
 		e.cancelDataLocked(channelID, d.ID)
 		d.Points = append([]Point{}, points...)
 		c.syncLegacy()
 		e.dirty = true
+		e.markConfigurationLocked()
 		return nil
 	}
 	return errors.New("通道不存在")
@@ -247,6 +283,7 @@ func (e *Engine) applyDevicePoints(channelID, deviceID string, updates []Point) 
 		if err != nil {
 			return
 		}
+		applied := []Point{}
 		for _, u := range updates {
 			u.Updated = time.Now().Format("15:04:05.000")
 			if u.Timestamp != "" {
@@ -264,6 +301,7 @@ func (e *Engine) applyDevicePoints(channelID, deviceID string, updates []Point) 
 					if u.WireType != 0 {
 						p.WireType = u.WireType
 					}
+					applied = append(applied, *p)
 					found = true
 					break
 				}
@@ -271,9 +309,11 @@ func (e *Engine) applyDevicePoints(channelID, deviceID string, updates []Point) 
 			if !found && len(d.Points) < 10000 {
 				u.Name = fmt.Sprintf("点 %d", u.Address)
 				d.Points = append(d.Points, u)
+				applied = append(applied, u)
 			}
 		}
 		c.syncLegacy()
+		e.markPointsLocked(channelID, d.ID, applied)
 
 		return
 	}
@@ -323,6 +363,15 @@ func (e *Engine) InterrogateDevice(channelID, deviceID string) error {
 	return s.forPeers(func(p *peer) error { return p.sendI(interrogation(d.CommonAddress, 6), "总召唤 · "+d.Name) })
 }
 func (e *Engine) PublishDevice(channelID, deviceID string) error {
+	return e.publishDeviceCategory(channelID, deviceID, "")
+}
+func (e *Engine) PublishDeviceCategory(channelID, deviceID, category string) error {
+	if !validDataCategory(category) {
+		return errors.New("请选择遥信或遥测")
+	}
+	return e.publishDeviceCategory(channelID, deviceID, category)
+}
+func (e *Engine) publishDeviceCategory(channelID, deviceID, category string) error {
 	s, err := e.getSession(channelID)
 	if err != nil {
 		return err
@@ -337,6 +386,9 @@ func (e *Engine) PublishDevice(channelID, deviceID string) error {
 	return s.forPeers(func(p *peer) error {
 		points := []Point{}
 		for _, point := range d.Points {
+			if category != "" && dataPointCategory(s.cfg.Protocol, point) != category {
+				continue
+			}
 			if point.Kind == "yx" || point.Kind == "yc" || point.Kind == "mc" || point.Kind == "position" {
 				points = append(points, point)
 			}

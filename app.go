@@ -6,7 +6,6 @@ import (
 	"encoding/csv"
 	"errors"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 
@@ -51,21 +50,15 @@ func (a *App) shutdown(context.Context) {
 	a.engine.StopAll()
 }
 func (a *App) beforeClose(context.Context) bool {
-	if a.remote != nil {
-		if reusableNativeWindow(a.remote.kind) && !a.remote.exiting.Load() {
-			runtime.WindowHide(a.ctx)
-			return true
-		}
-		return false
-	}
 	return false
 }
-func (a *App) GetSnapshot() core.Snapshot { return a.engine.Snapshot() }
+func (a *App) GetSnapshot() core.Snapshot           { return a.engine.Snapshot() }
+func (a *App) GetView(r core.ViewRequest) core.View { return a.engine.View(r) }
 func (a *App) GetAutoData(channel, device string) (core.AutoDataSnapshot, error) {
 	return a.engine.GetAutoData(channel, device)
 }
 func (a *App) SaveAutoData(channel, device string, c core.AutoDataConfig) (core.AutoDataSnapshot, error) {
-	return a.engine.SaveAutoData(channel, device, c)
+	return a.engine.ConfigureAutoData(channel, device, "", c)
 }
 func (a *App) StartAutoData(channel, device string) (core.AutoDataSnapshot, error) {
 	return a.engine.StartAutoData(channel, device)
@@ -73,14 +66,47 @@ func (a *App) StartAutoData(channel, device string) (core.AutoDataSnapshot, erro
 func (a *App) SetAutoDataState(channel, device, action string) (core.AutoDataSnapshot, error) {
 	return a.engine.SetAutoDataState(channel, device, action)
 }
+func (a *App) GetDataTest(channel, device, category string) (core.AutoDataSnapshot, error) {
+	return a.engine.GetDataTest(channel, device, category)
+}
+func (a *App) SaveDataTest(channel, device, category string, config core.AutoDataConfig) (core.AutoDataSnapshot, error) {
+	return a.engine.ConfigureAutoData(channel, device, category, config)
+}
+func (a *App) StartDataTest(channel, device, category string) (core.AutoDataSnapshot, error) {
+	return a.engine.StartDataTest(channel, device, category)
+}
+func (a *App) SetDataTestState(channel, device, category, action string) (core.AutoDataSnapshot, error) {
+	return a.engine.SetDataTestState(channel, device, category, action)
+}
+func (a *App) SetTelemetryRange(channel, device string, r core.TelemetryRangeEdit) (core.TelemetryRangeResult, error) {
+	return a.engine.SetTelemetryRange(channel, device, r)
+}
+func (a *App) GetControlSimulation(channel, device, category string) (core.ControlSimulation, error) {
+	return a.engine.GetControlSimulation(channel, device, category)
+}
+func (a *App) SaveControlSimulation(channel, device, category string, cfg core.ControlSimulation) error {
+	return a.engine.ConfigureControlSimulation(channel, device, category, cfg)
+}
 func (a *App) PrepareAutoControl(channel, device, mode string, seed core.AutoControlSeed) (core.AutoControlSnapshot, error) {
-	return a.engine.PrepareAutoControl(channel, device, mode, seed)
+	return a.engine.PrepareAutoControlDraft(channel, device, mode, seed)
+}
+func (a *App) GetAutoControlStatus(channel, device, mode string) (core.AutoControlStatus, error) {
+	return a.engine.AutoControlStatus(channel, device, mode)
+}
+func (a *App) GetAutoControlDetails(channel, device, mode string, offset int) (core.AutoControlDetails, error) {
+	return a.engine.AutoControlDetails(channel, device, mode, offset)
 }
 func (a *App) GetAutoControl(channel, device, mode string) (core.AutoControlSnapshot, error) {
 	return a.engine.GetAutoControl(channel, device, mode)
 }
+func (a *App) GetAutoControlDraft(channel, device, mode string) (core.AutoControlSnapshot, error) {
+	return a.engine.GetAutoControlDraft(channel, device, mode)
+}
+func (a *App) SaveAutoControlDraft(channel, device, mode string) (core.AutoControlSnapshot, error) {
+	return a.engine.SaveAutoControlDraft(channel, device, mode)
+}
 func (a *App) SetAutoValueType(channel, device string, typ byte) error {
-	return a.engine.SetAutoValueType(channel, device, typ)
+	return a.engine.SetAutoDraftValueType(channel, device, typ)
 }
 func (a *App) OpenAutoBulk(channel, device string) error {
 	if err := a.engine.ValidateAutoControlWindow(channel, device, "yk"); err != nil {
@@ -89,16 +115,25 @@ func (a *App) OpenAutoBulk(channel, device string) error {
 	return a.OpenNativeWindow(NativeContext{Kind: "auto-bulk-dialog", Channel: channel, Device: device, Role: "client", Point: "yk", Edit: true})
 }
 func (a *App) UpdateAutoOptions(channel, device, mode string, o core.AutoControlOptions) (core.AutoControlSnapshot, error) {
-	return a.engine.UpdateAutoOptions(channel, device, mode, o)
+	if _, err := a.engine.UpdateAutoDraftOptions(channel, device, mode, o); err != nil {
+		return core.AutoControlSnapshot{}, err
+	}
+	return a.engine.GetAutoControlDraft(channel, device, mode)
 }
 func (a *App) UpdateAutoRows(channel, device, mode string, rows []core.AutoControlRowEdit) (core.AutoControlSnapshot, error) {
-	return a.engine.UpdateAutoRows(channel, device, mode, rows)
+	if _, err := a.engine.UpdateAutoDraftRows(channel, device, mode, rows); err != nil {
+		return core.AutoControlSnapshot{}, err
+	}
+	return a.engine.GetAutoControlDraft(channel, device, mode)
 }
 func (a *App) ApplyAutoBulk(channel, device string, b core.AutoControlBulk) (core.AutoControlSnapshot, error) {
-	return a.engine.ApplyAutoBulk(channel, device, b)
+	if _, err := a.engine.ApplyAutoDraftBulk(channel, device, b); err != nil {
+		return core.AutoControlSnapshot{}, err
+	}
+	return a.engine.GetAutoControlDraft(channel, device, "yk")
 }
 func (a *App) StartAutoControl(channel, device, mode string) (core.AutoControlSnapshot, error) {
-	return a.engine.StartAutoControl(channel, device, mode)
+	return a.engine.StartSavedAutoControl(channel, device, mode)
 }
 func (a *App) PauseAutoControl(channel, device, mode string) (core.AutoControlSnapshot, error) {
 	return a.engine.PauseAutoControl(channel, device, mode)
@@ -123,42 +158,35 @@ func (a *App) SetWorkspaceMode(mode string) error {
 func (a *App) UpsertChannel(c core.Channel) (string, error) { return a.engine.UpsertChannel(c) }
 func (a *App) UpdateTransport(c core.Channel) error         { return a.engine.UpdateTransport(c) }
 func (a *App) DeleteChannel(id string) error                { return a.engine.DeleteChannel(id) }
-func (a *App) SetPoints(id string, points []core.Point) error {
-	return a.engine.SetPoints(id, points)
-}
-func (a *App) PatchPoint(id string, key *core.PointKey, point core.Point, fields []string) error {
-	return a.engine.PatchPoint(id, key, point, fields)
-}
-func (a *App) DeletePoint(id string, key core.PointKey) error { return a.engine.DeletePoint(id, key) }
 func (a *App) UpsertDevice(channelID, protocol string, d core.Device, replace bool) (string, error) {
 	return a.engine.UpsertDevice(channelID, protocol, d, replace)
 }
 func (a *App) DeleteDevice(channelID, deviceID string) error {
-	return a.engine.DeleteDevice(channelID, deviceID)
+	return a.engine.ConfigureDeleteDevice(channelID, deviceID)
 }
 func (a *App) RenameDevice(channelID, deviceID, name string) error {
 	return a.engine.RenameDevice(channelID, deviceID, name)
 }
 func (a *App) PatchDevicePoint(channelID, deviceID string, key *core.PointKey, p core.Point, fields []string) error {
-	return a.engine.PatchDevicePoint(channelID, deviceID, key, p, fields)
+	return a.engine.ConfigureDevicePoint(channelID, deviceID, key, p, fields)
 }
 func (a *App) DeleteDevicePoint(channelID, deviceID string, key core.PointKey) error {
-	return a.engine.DeleteDevicePoint(channelID, deviceID, key)
+	return a.engine.ConfigureDeleteDevicePoint(channelID, deviceID, key)
 }
-func (a *App) ReadDeviceModbus(channelID, deviceID string, fc byte, start, count uint16) error {
-	return a.engine.ReadDeviceModbus(channelID, deviceID, fc, start, count)
+func (a *App) ReadDeviceModbusPoints(channel, device string, fc byte, selection string) (core.PointOperationResult, error) {
+	return a.engine.ReadDeviceModbusPoints(channel, device, fc, selection)
 }
-func (a *App) WriteDeviceModbus(channelID, deviceID string, fc byte, address, value uint16) error {
-	return a.engine.WriteDeviceModbus(channelID, deviceID, fc, address, value)
+func (a *App) WriteDeviceModbusPoints(channel, device string, fc byte, selection string, value uint16) (core.PointOperationResult, error) {
+	return a.engine.WriteDeviceModbusPoints(channel, device, fc, selection, value)
 }
 func (a *App) InterrogateDevice(channelID, deviceID string) error {
 	return a.engine.InterrogateDevice(channelID, deviceID)
 }
-func (a *App) PublishDevice(channelID, deviceID string) error {
-	return a.engine.PublishDevice(channelID, deviceID)
+func (a *App) PublishDeviceCategory(channelID, deviceID, category string) error {
+	return a.engine.PublishDeviceCategory(channelID, deviceID, category)
 }
 func (a *App) EditPointCell(channelID, deviceID string, key core.PointKey, field string, point core.Point) (core.PointValueResult, error) {
-	return a.engine.EditPointCell(channelID, deviceID, key, field, point)
+	return a.engine.ConfigurePointCell(channelID, deviceID, key, field, point)
 }
 func (a *App) SetPointValue(channelID, deviceID string, key core.PointKey, value float64) (core.PointValueResult, error) {
 	return a.engine.SetPointValue(channelID, deviceID, key, value)
@@ -173,15 +201,8 @@ func (a *App) ClearMessages()                          { a.engine.ClearMessages(
 func (a *App) ClearChannelMessages(id string)          { a.engine.ClearChannelMessages(id) }
 func (a *App) RenameChannel(id, name string) error     { return a.engine.RenameChannel(id, name) }
 func (a *App) SendHex(id, text string, crc bool) error { return a.engine.SendHex(id, text, crc) }
-func (a *App) ReadModbus(id string, fc byte, start, count uint16) error {
-	return a.engine.ReadModbus(id, fc, start, count)
-}
-func (a *App) WriteModbus(id string, fc byte, address, value uint16) error {
-	return a.engine.WriteModbus(id, fc, address, value)
-}
-func (a *App) Interrogate(id string) error    { return a.engine.Interrogate(id) }
-func (a *App) Publish(id string) error        { return a.engine.Publish(id) }
-func (a *App) SerialPorts() ([]string, error) { return core.SerialPorts() }
+func (a *App) Interrogate(id string) error             { return a.engine.Interrogate(id) }
+func (a *App) SerialPorts() ([]string, error)          { return core.SerialPorts() }
 func (a *App) LocalIPs() ([]string, error) {
 	addresses, err := net.InterfaceAddrs()
 	if err != nil {
@@ -198,7 +219,6 @@ func (a *App) LocalIPs() ([]string, error) {
 	}
 	return result, nil
 }
-func (a *App) StartDemo(protocol string) (string, error) { return a.engine.Demo(protocol) }
 func (a *App) OpenProject() (string, error) {
 	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{Title: "打开 protocol-simulator 工程", Filters: []runtime.FileFilter{{DisplayName: "protocol-simulator 工程", Pattern: "*.json"}}})
 	if err != nil || path == "" {
@@ -242,9 +262,6 @@ func (a *App) SaveProject(saveAs bool) (string, error) {
 	a.updateMainWindowTitle("")
 	return path, nil
 }
-func (a *App) ExportMessages() (string, error) {
-	return a.exportMessageRows(a.engine.Snapshot().Messages)
-}
 func (a *App) ExportMessageRows(rows []core.Message) (string, error) {
 	if len(rows) > 2000 {
 		return "", errors.New("报文超过缓存上限")
@@ -269,50 +286,6 @@ func (a *App) exportMessageRows(rows []core.Message) (string, error) {
 	}
 	return path, core.AtomicWrite(path, b.Bytes())
 }
-func (a *App) ExportPoints(id string) (string, error) { return a.ExportDevicePoints(id, "") }
-func (a *App) ExportDevicePoints(id, deviceID string) (string, error) {
-	d, err := a.engine.Device(id, deviceID)
-	if err != nil {
-		return "", err
-	}
-	points := d.Points
-	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{Title: "导出点表", DefaultFilename: "点表.csv", Filters: []runtime.FileFilter{{DisplayName: "CSV", Pattern: "*.csv"}}})
-	if err != nil || path == "" {
-		return "", err
-	}
-	data, err := encodePointCSV(points)
-	if err != nil {
-		return "", err
-	}
-	return path, core.AtomicWrite(path, data)
-}
-func (a *App) ImportPoints(id string) (int, error) { return a.ImportDevicePoints(id, "") }
-func (a *App) ImportDevicePoints(id, deviceID string) (int, error) {
-	if _, err := a.engine.Device(id, deviceID); err != nil {
-		return 0, err
-	}
-	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{Title: "导入点表", Filters: []runtime.FileFilter{{DisplayName: "CSV", Pattern: "*.csv"}}})
-	if err != nil || path == "" {
-		return 0, err
-	}
-	stat, err := os.Stat(path)
-	if err != nil {
-		return 0, err
-	}
-	if stat.Size() > 4*1024*1024 {
-		return 0, errors.New("点表文件超过 4MB")
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return 0, err
-	}
-	points, err := decodePointCSV(data)
-	if err != nil {
-		return 0, err
-	}
-	return len(points), a.engine.SetDevicePoints(id, deviceID, points)
-}
-
 func (a *App) ClearEvents(channel, category string) { a.engine.ClearEvents(channel, category) }
 func (a *App) ClockSyncDevice(channel, device string) error {
 	return a.engine.ClockSyncDevice(channel, device)

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -113,6 +114,21 @@ func configured104Type(d Device, kind string) (byte, error) {
 	}
 	return 0, errors.New("遥测类型无效")
 }
+
+// Imported projects may omit the per-point type while retaining device settings.
+func deviceValidationPoints(protocol string, d Device, points []Point) []Point {
+	if protocol != "iec104" || d.Configuration == nil {
+		return points
+	}
+	resolved := append([]Point{}, points...)
+	for i := range resolved {
+		if resolved[i].WireType == 0 {
+			resolved[i].WireType, _ = configured104Type(d, resolved[i].Kind)
+		}
+	}
+	return resolved
+}
+
 func point104Width(typ byte) int {
 	switch typ {
 	case 1, 3:
@@ -168,7 +184,7 @@ func pointsASDU(points []Point, ca uint16, cot byte, sequential bool) ([]byte, e
 	}
 	for i, p := range points {
 		if sequential && p.Address != points[0].Address+uint32(i) {
-			return nil, errors.New("SQ1 地址必须连续")
+			return nil, errors.New("SQ1 点位必须连续")
 		}
 		if i == 0 || !sequential {
 			payload = append(payload, ioa(p.Address)...)
@@ -193,7 +209,7 @@ func pointsASDU(points []Point, ca uint16, cot byte, sequential bool) ([]byte, e
 			b[1] = p.Quality
 		case 9, 34:
 			if p.Value < -1 || p.Value >= 1 {
-				return nil, errors.New("归一化遥测范围为 -1 ≤ 值 < 1")
+				return nil, fmt.Errorf("点位 %d：归一化遥测范围为 -1 ≤ 值 < 1；较大数值请选择标度化或短浮点格式", p.Address)
 			}
 			binary.LittleEndian.PutUint16(b, uint16(int16(min(32767, math.Round(p.Value*32768)))))
 			b[2] = p.Quality
@@ -205,7 +221,7 @@ func pointsASDU(points []Point, ca uint16, cot byte, sequential bool) ([]byte, e
 			b[2] = p.Quality
 		case 21:
 			if p.Value < -1 || p.Value >= 1 {
-				return nil, errors.New("归一化遥测范围无效")
+				return nil, fmt.Errorf("点位 %d：归一化遥测范围为 -1 ≤ 值 < 1；较大数值请选择标度化或短浮点格式", p.Address)
 			}
 			binary.LittleEndian.PutUint16(b, uint16(int16(min(32767, math.Round(p.Value*32768)))))
 		case 13, 36:
@@ -244,7 +260,7 @@ func Decode104Points(a []byte, ca uint16) ([]Point, error) {
 		return nil, errors.New("ASDU 长度不足")
 	}
 	if binary.LittleEndian.Uint16(a[4:]) != ca {
-		return nil, errors.New("公共地址不匹配")
+		return nil, errors.New("公共点位不匹配")
 	}
 	typ := a[0]
 	width := point104Width(typ)
@@ -271,7 +287,7 @@ func Decode104Points(a []byte, ca uint16) ([]Point, error) {
 			address++
 		}
 		if address > 0xffffff {
-			return nil, errors.New("地址溢出")
+			return nil, errors.New("点位溢出")
 		}
 		v := a[offset : offset+width]
 		p := Point{Address: address, Kind: "yc", WireType: typ}
@@ -321,6 +337,32 @@ func Decode104Points(a []byte, ca uint16) ([]Point, error) {
 	return points, nil
 }
 func (p *peer) publishPoints(d Device, points []Point, cot byte) error {
+	return p.publishPointsContext(context.Background(), d, points, cot, "信息体上送 · "+d.Name)
+}
+func (p *peer) publishPointsContext(ctx context.Context, d Device, points []Point, cot byte, summary string) error {
+	// Periodic and background scans carry the current untimed data. Event
+	// timestamps remain stored for spontaneous reporting and SOE records.
+	if cot == 1 || cot == 2 || cot == 20 {
+		points = append([]Point{}, points...)
+		for i := range points {
+			switch points[i].WireType {
+			case 30:
+				points[i].WireType = 1
+			case 31:
+				points[i].WireType = 3
+			case 32:
+				points[i].WireType = 5
+			case 34:
+				points[i].WireType = 9
+			case 35:
+				points[i].WireType = 11
+			case 36:
+				points[i].WireType = 13
+			case 37:
+				points[i].WireType = 15
+			}
+		}
+	}
 	seq := value(d, "cbVSQ", "非顺序SQ0") == "顺序SQ1"
 	for i := 0; i < len(points); {
 		typ := points[i].WireType
@@ -345,10 +387,114 @@ func (p *peer) publishPoints(d Device, points []Point, cot byte) error {
 		if err != nil {
 			return err
 		}
-		if err = p.sendI(a, "信息体上送 · "+d.Name); err != nil {
+		if err = p.sendIContext(ctx, a, summary); err != nil {
 			return err
 		}
 		i = j
 	}
 	return nil
+}
+
+func layout104(d Device) (int, int, int) {
+	cot := number(d, "txtCOT", number(d, "textEdit2", 2))
+	ca := number(d, "txtASDU_Byte", number(d, "textEdit3", 2))
+	ioa := number(d, "txtMess_Byte", 3)
+	if value(d, "txt_DeviceAddr", "") != "" {
+		ioa = number(d, "txtAdd", 3)
+	}
+	return cot, ca, ioa
+}
+func littleValue(b []byte) uint32 {
+	var n uint32
+	for i, v := range b {
+		n |= uint32(v) << uint(8*i)
+	}
+	return n
+}
+func putLittle(n uint32, size int) []byte {
+	b := make([]byte, size)
+	for i := range b {
+		b[i] = byte(n >> uint(8*i))
+	}
+	return b
+}
+func asduWidth(typ byte) int {
+	if n := point104Width(typ); n > 0 {
+		return n
+	}
+	if n := controlWidth(typ); n > 0 {
+		if typ >= 58 && typ <= 63 {
+			n += 7
+		}
+		return n
+	}
+	switch typ {
+	case 100, 101:
+		return 1
+	case 103:
+		return 7
+	}
+	return 0
+}
+
+// Internally ASDUs use COT2/CA2/IOA3. Only the peer boundary adapts configured
+// field widths, keeping control matching and point metadata independent of layout.
+func convertASDU(a []byte, fromCOT, fromCA, fromIOA, toCOT, toCA, toIOA int) ([]byte, error) {
+	head := 2 + fromCOT + fromCA
+	if len(a) < head {
+		return nil, errors.New("ASDU 头不足")
+	}
+	cot := littleValue(a[2 : 2+fromCOT])
+	ca := littleValue(a[2+fromCOT : head])
+	if ca >= 1<<uint(toCA*8) || cot >= 1<<uint(toCOT*8) {
+		return nil, errors.New("ASDU 点位或传送原因超出配置字节数")
+	}
+	out := append([]byte{a[0], a[1]}, putLittle(cot, toCOT)...)
+	out = append(out, putLittle(ca, toCA)...)
+	n := int(a[1] & 127)
+	seq := a[1]&128 != 0
+	width := asduWidth(a[0])
+	if width == 0 && n == 1 {
+		width = len(a) - head - fromIOA
+	}
+	if n == 0 || width < 0 {
+		return nil, fmt.Errorf("ASDU 类型 %d 的布局未知", a[0])
+	}
+	offset := head
+	for i := 0; i < n; i++ {
+		if !seq || i == 0 {
+			if len(a) < offset+fromIOA {
+				return nil, errors.New("信息体点位不足")
+			}
+			address := littleValue(a[offset : offset+fromIOA])
+			if address >= 1<<uint(toIOA*8) {
+				return nil, errors.New("信息体点位超出配置字节数")
+			}
+			out = append(out, putLittle(address, toIOA)...)
+			offset += fromIOA
+		}
+		if len(a) < offset+width {
+			return nil, errors.New("信息体不足")
+		}
+		out = append(out, a[offset:offset+width]...)
+		offset += width
+	}
+	if offset != len(a) {
+		return nil, errors.New("ASDU 布局长度不符")
+	}
+	return out, nil
+}
+func (p *peer) wireASDU(a []byte) ([]byte, error) {
+	c, ca, ioa := layout104(p.device104())
+	if c == 2 && ca == 2 && ioa == 3 {
+		return a, nil
+	}
+	return convertASDU(a, 2, 2, 3, c, ca, ioa)
+}
+func (p *peer) canonicalASDU(a []byte) ([]byte, error) {
+	c, ca, ioa := layout104(p.device104())
+	if c == 2 && ca == 2 && ioa == 3 {
+		return a, nil
+	}
+	return convertASDU(a, c, ca, ioa, 2, 2, 3)
 }

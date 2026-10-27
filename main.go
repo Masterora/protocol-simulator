@@ -14,7 +14,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
 
-//go:embed all:frontend
+//go:embed frontend/*.html frontend/*.css frontend/*.js frontend/*.svg
 var assets embed.FS
 
 func main() {
@@ -54,6 +54,18 @@ func main() {
 		width, height = 430, 760
 		minWidth, minHeight = 380, 300
 		switch c.Kind {
+		case "telemetry-values-dialog":
+			width, height = 540, 390
+			minWidth, minHeight = 500, 350
+		case "relation-dialog":
+			width, height = 1100, 540
+			minWidth, minHeight = 900, 420
+		case "remote-config-dialog":
+			width, height = 760, 530
+			minWidth, minHeight = 680, 400
+			if strings.TrimPrefix(c.PointKind, "tab:") == "yt" {
+				height = 430
+			}
 		case "auto-data-dialog":
 			width, height = 1080, 560
 			minWidth, minHeight = 860, 400
@@ -61,14 +73,14 @@ func main() {
 			width, height = 380, 650
 			minWidth, minHeight = 280, 110
 		case "device-dialog":
-			width, height = 340, 180
-			minWidth, minHeight = 280, 110
+			width, height = 660, 700
+			minWidth, minHeight = 640, 300
 		case "auto-yk-dialog":
-			width, height = 945, 450
-			minWidth, minHeight = 925, 420
+			width, height = 760, 380
+			minWidth, minHeight = 740, 340
 		case "auto-yt-dialog":
-			width, height = 536, 426
-			minWidth, minHeight = 516, 386
+			width, height = 536, 326
+			minWidth, minHeight = 516, 286
 		case "auto-bulk-dialog":
 			width, height = 210, 270
 			minWidth, minHeight = 180, 240
@@ -79,6 +91,10 @@ func main() {
 			height = 480
 		case "control-dialog":
 			height = 580
+			if c.Point == "setpoint" || c.Point == "step" {
+				height = 430
+				minHeight = 420
+			}
 		case "events-dialog":
 			width, height = 950, 550
 			minWidth, minHeight = 700, 300

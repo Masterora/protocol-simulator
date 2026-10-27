@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "name": "自动批量遥控遥调联调",
+  "name": "四遥自动批量联调",
   "channels": [
     {
       "id": "auto-server",
@@ -65,8 +65,158 @@
               "name": "位置反馈2",
               "value": 0,
               "quality": 0
+            },
+            {
+              "address": 16385,
+              "kind": "yc",
+              "tab": "yc",
+              "wireType": 13,
+              "name": "遥测1",
+              "value": 0,
+              "quality": 0
+            },
+            {
+              "address": 16386,
+              "kind": "yc",
+              "tab": "yc",
+              "wireType": 13,
+              "name": "遥测2",
+              "value": 0,
+              "quality": 0
             }
-          ]
+          ],
+          "configuration": {
+            "version": "标准版",
+            "values": {
+              "cbYC_Type": "带品质短浮点(type:13)"
+            },
+            "ranges": [
+              {
+                "tab": "yx",
+                "kind": "yx",
+                "address": 1,
+                "count": 2,
+                "name": "遥信"
+              },
+              {
+                "tab": "yc",
+                "kind": "yc",
+                "address": 16385,
+                "count": 2,
+                "name": "遥测"
+              },
+              {
+                "tab": "yk",
+                "kind": "yk",
+                "address": 24577,
+                "count": 2,
+                "name": "遥控"
+              },
+              {
+                "tab": "yt",
+                "kind": "yt",
+                "address": 24833,
+                "count": 2,
+                "name": "遥调"
+              }
+            ],
+            "controls": {
+              "yk": {
+                "mode": "normal",
+                "delayMs": 0,
+                "mappings": [
+                  {
+                    "source": {
+                      "kind": "yk",
+                      "address": 24577
+                    },
+                    "target": {
+                      "kind": "yx",
+                      "address": 1
+                    },
+                    "invert": false
+                  },
+                  {
+                    "source": {
+                      "kind": "yk",
+                      "address": 24578
+                    },
+                    "target": {
+                      "kind": "yx",
+                      "address": 2
+                    },
+                    "invert": true
+                  }
+                ]
+              },
+              "yt": {
+                "mode": "normal",
+                "delayMs": 0,
+                "mappings": [
+                  {
+                    "source": {
+                      "kind": "yt",
+                      "address": 24833
+                    },
+                    "target": {
+                      "kind": "yc",
+                      "address": 16385
+                    },
+                    "invert": false
+                  },
+                  {
+                    "source": {
+                      "kind": "yt",
+                      "address": 24834
+                    },
+                    "target": {
+                      "kind": "yc",
+                      "address": 16386
+                    },
+                    "invert": false
+                  }
+                ]
+              }
+            }
+          },
+          "dataTests": {
+            "telemetry": {
+              "rules": [
+                {
+                  "enabled": true,
+                  "kind": "yx",
+                  "start": 1,
+                  "end": 2,
+                  "intervalMs": 1000,
+                  "mode": "sequence",
+                  "min": 0,
+                  "max": 1,
+                  "step": 1
+                },
+                {
+                  "enabled": true,
+                  "kind": "yc",
+                  "start": 16385,
+                  "end": 16386,
+                  "intervalMs": 1000,
+                  "mode": "increment",
+                  "min": 0,
+                  "max": 100,
+                  "step": 1
+                },
+                {
+                  "enabled": true,
+                  "kind": "yc",
+                  "start": 16385,
+                  "end": 16386,
+                  "intervalMs": 2000,
+                  "mode": "report",
+                  "cause": 1
+                }
+              ],
+              "stopOnDisconnect": true
+            }
+          }
         }
       ]
     },
@@ -135,8 +285,62 @@
               "name": "位置反馈2",
               "value": 0,
               "quality": 0
+            },
+            {
+              "address": 16385,
+              "kind": "yc",
+              "tab": "yc",
+              "wireType": 13,
+              "name": "遥测1",
+              "value": 0,
+              "quality": 0
+            },
+            {
+              "address": 16386,
+              "kind": "yc",
+              "tab": "yc",
+              "wireType": 13,
+              "name": "遥测2",
+              "value": 0,
+              "quality": 0
             }
-          ]
+          ],
+          "configuration": {
+            "version": "标准版",
+            "values": {
+              "cbYC_Type": "带品质短浮点(type:13)"
+            },
+            "ranges": [
+              {
+                "tab": "yx",
+                "kind": "yx",
+                "address": 1,
+                "count": 2,
+                "name": "遥信"
+              },
+              {
+                "tab": "yc",
+                "kind": "yc",
+                "address": 16385,
+                "count": 2,
+                "name": "遥测"
+              },
+              {
+                "tab": "yk",
+                "kind": "yk",
+                "address": 24577,
+                "count": 2,
+                "name": "遥控"
+              },
+              {
+                "tab": "yt",
+                "kind": "yt",
+                "address": 24833,
+                "count": 2,
+                "name": "遥调"
+              }
+            ]
+          }
         }
       ]
     }

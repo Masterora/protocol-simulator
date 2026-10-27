@@ -52,7 +52,7 @@ func TestNativeEditorSharesParentEngine(t *testing.T) {
 		t.Fatalf("inconsistent shared snapshot: %v", err)
 	}
 }
-func TestNativeAutoDataRunsAcrossEditorSessions(t *testing.T) {
+func TestNativeIndependentDataTestRunsAcrossEditorSessions(t *testing.T) {
 	a, remote := editorFixture(t)
 	_, err := a.engine.Demo("modbus-tcp")
 	if err != nil {
@@ -66,18 +66,21 @@ func TestNativeAutoDataRunsAcrossEditorSessions(t *testing.T) {
 		}
 	}
 	config := core.AutoDataConfig{Rules: []core.AutoDataRule{{Enabled: true, Kind: "holding", Start: 0, End: 1, IntervalMS: 200, Mode: "fixed", Min: 123, Max: 123, Step: 1}}}
-	if _, err = remote.call("SaveAutoData", rawArgs(server.ID, server.Devices[0].ID, config)); err != nil {
+	if _, err = remote.call("SaveDataTest", rawArgs(server.ID, server.Devices[0].ID, "yc", config)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = remote.call("StartAutoData", rawArgs(server.ID, server.Devices[0].ID)); err != nil {
+	if err = a.engine.Start(server.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = remote.call("StartDataTest", rawArgs(server.ID, server.Devices[0].ID, "yc")); err != nil {
 		t.Fatal(err)
 	}
 	a.native.mu.Lock()
 	delete(a.native.sessions, remote.session)
-	a.native.sessions["reopen"] = &nativeSession{context: NativeContext{Kind: "auto-data-dialog", Role: "server", Channel: server.ID, Device: server.Devices[0].ID}, result: make(chan nativeResult, 1)}
+	a.native.sessions["reopen"] = &nativeSession{context: NativeContext{Kind: "auto-data-dialog", PointKind: "yc", Role: "server", Channel: server.ID, Device: server.Devices[0].ID}, result: make(chan nativeResult, 1)}
 	a.native.mu.Unlock()
 	reopened := &nativeRemote{address: remote.address, token: remote.token, session: "reopen"}
-	raw, err := reopened.call("GetAutoData", rawArgs(server.ID, server.Devices[0].ID))
+	raw, err := reopened.call("GetDataTest", rawArgs(server.ID, server.Devices[0].ID, "yc"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +91,7 @@ func TestNativeAutoDataRunsAcrossEditorSessions(t *testing.T) {
 	if view.Status != "running" {
 		t.Fatal("closing editor stopped background task")
 	}
-	if _, err = reopened.call("SetAutoDataState", rawArgs(server.ID, server.Devices[0].ID, "stop")); err != nil {
+	if _, err = reopened.call("SetDataTestState", rawArgs(server.ID, server.Devices[0].ID, "yc", "stop")); err != nil {
 		t.Fatal(err)
 	}
 	a.native.mu.Lock()
@@ -102,6 +105,23 @@ func TestNativeAutoDataRunsAcrossEditorSessions(t *testing.T) {
 		t.Fatal("old data window accepted replacement project with reused IDs")
 	}
 }
+func TestNativeDataWindowReusesOneDeviceWindow(t *testing.T) {
+	a, _ := editorFixture(t)
+	existing := &nativeSession{context: NativeContext{Kind: "auto-data-dialog", Role: "server", Channel: "a", Device: "d", PointKind: "telemetry", Edit: true, Generation: 1}}
+	a.native.sessions["unified"] = existing
+	for _, category := range []string{"yx", "yc", "yx-report", "yc-report"} {
+		context := existing.context
+		context.PointKind = "tab:" + strings.TrimSuffix(category, "-report")
+		if strings.HasSuffix(category, "-report") {
+			context.Point = "report"
+		}
+		session, err := a.native.open(context)
+		if err != nil || session != existing {
+			t.Fatalf("did not reuse unified device window: %s %v", category, err)
+		}
+	}
+}
+
 func TestNativeIPCRejectsUnauthorizedAndInvalidCalls(t *testing.T) {
 	a, remote := editorFixture(t)
 	response, err := http.Post(a.native.address+"/rpc", "application/json", strings.NewReader(`{"method":"GetSnapshot"}`))
@@ -287,6 +307,12 @@ func TestNativeAutomaticJobPersistsAcrossWindowReopenAndStopsViaIPC(t *testing.T
 	options.IntervalMS = 1000
 	options.TimeoutMS = 1000
 	if _, err = remote.call("UpdateAutoOptions", rawArgs(append(args, options)...)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = remote.call("SaveAutoControlDraft", rawArgs(args...)); err != nil {
+		t.Fatal(err)
+	}
+	if err = a.engine.Start(client.ID); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(3 * time.Second)

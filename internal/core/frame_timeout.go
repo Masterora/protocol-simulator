@@ -24,6 +24,12 @@ func (r *packetReader) Read(b []byte) (int, error) {
 		timeout := time.Duration(r.peer.s.cfg.TimeoutMS) * time.Millisecond
 		for _, d := range r.peer.s.e.devices(r.peer.s.cfg.ID) {
 			if r.peer.s.cfg.Protocol == "iec104" || d.Unit == b[0] {
+				if r.peer.s.cfg.Protocol == "iec104" {
+					if ms := number(d, "txt_FrameOverTime", 0); ms > 0 {
+						timeout = time.Duration(ms) * time.Millisecond
+					}
+					break
+				}
 				key := "txt_overTime"
 				if r.peer.s.cfg.Role == "server" {
 					key = "txtTimeOut"

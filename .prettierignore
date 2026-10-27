@@ -1,0 +1,6 @@
+node_modules/
+work/
+outputs/
+verification/
+references/
+frontend/wailsjs/

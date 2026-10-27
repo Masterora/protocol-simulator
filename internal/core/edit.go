@@ -16,6 +16,7 @@ func (e *Engine) ClearChannelMessages(id string) {
 		}
 	}
 	e.messages = kept
+	e.messageEpoch++
 }
 
 func (e *Engine) RenameChannel(id, name string) error {
@@ -30,6 +31,7 @@ func (e *Engine) RenameChannel(id, name string) error {
 		if e.project.Channels[i].ID == id {
 			e.project.Channels[i].Name = strings.TrimSpace(name)
 			e.dirty = true
+			e.markConfigurationLocked()
 			return nil
 		}
 	}
@@ -42,6 +44,9 @@ func (e *Engine) PatchPoint(id string, key *PointKey, point Point, fields []stri
 	return e.PatchDevicePoint(id, "", key, point, fields)
 }
 func (e *Engine) PatchDevicePoint(id, deviceID string, key *PointKey, point Point, fields []string) error {
+	return e.patchDevicePoint(id, deviceID, key, point, fields, false)
+}
+func (e *Engine) patchDevicePoint(id, deviceID string, key *PointKey, point Point, fields []string, disconnect bool) error {
 	e.op.Lock()
 	defer e.op.Unlock()
 	e.mu.Lock()
@@ -56,6 +61,7 @@ func (e *Engine) PatchDevicePoint(id, deviceID string, key *PointKey, point Poin
 			return err
 		}
 		points := append([]Point{}, d.Points...)
+		editedIndex := -1
 		if key == nil {
 			points = append(points, point)
 		} else {
@@ -69,6 +75,7 @@ func (e *Engine) PatchDevicePoint(id, deviceID string, key *PointKey, point Poin
 			if index < 0 {
 				return errors.New("此点已被删除或替换，请重新编辑")
 			}
+			editedIndex = index
 			p := points[index]
 			for _, field := range fields {
 				switch field {
@@ -92,8 +99,49 @@ func (e *Engine) PatchDevicePoint(id, deviceID string, key *PointKey, point Poin
 			}
 			points[index] = p
 		}
-		if err := validatePoints(points, c.Protocol); err != nil {
+		if err := validateDevicePointTable(*c, *d, points); err != nil {
 			return err
+		}
+		candidate := *d
+		candidate.Points = points
+		if err := validateRemoteReferences(*c, candidate); err != nil {
+			return err
+		}
+		if disconnect {
+			structural := key == nil
+			for _, field := range fields {
+				if field == "address" || field == "kind" || field == "feedback" {
+					structural = true
+				}
+			}
+			if structural {
+				e.disconnectConfigurationLocked(id)
+				// Receiving a final frame while stopping must not roll other
+				// points, or untouched fields of this point, back to the draft.
+				for j, latest := range d.Points {
+					if j == editedIndex {
+						for _, field := range fields {
+							switch field {
+							case "address":
+								latest.Address = points[j].Address
+							case "kind":
+								latest.Kind, latest.Tab = points[j].Kind, points[j].Tab
+							case "name":
+								latest.Name = points[j].Name
+							case "value":
+								latest.Value, latest.Updated = points[j].Value, points[j].Updated
+							case "quality":
+								latest.Quality = points[j].Quality
+							case "feedback":
+								latest.Feedback = points[j].Feedback
+							}
+						}
+						points[j] = latest
+					} else {
+						points[j] = latest
+					}
+				}
+			}
 		}
 		d.Points = points
 		for _, field := range fields {
@@ -104,6 +152,7 @@ func (e *Engine) PatchDevicePoint(id, deviceID string, key *PointKey, point Poin
 		}
 		c.syncLegacy()
 		e.dirty = true
+		e.markConfigurationLocked()
 		return nil
 	}
 	return errors.New("通道不存在")
@@ -111,6 +160,9 @@ func (e *Engine) PatchDevicePoint(id, deviceID string, key *PointKey, point Poin
 
 func (e *Engine) DeletePoint(id string, key PointKey) error { return e.DeleteDevicePoint(id, "", key) }
 func (e *Engine) DeleteDevicePoint(id, deviceID string, key PointKey) error {
+	return e.deleteDevicePoint(id, deviceID, key, false)
+}
+func (e *Engine) deleteDevicePoint(id, deviceID string, key PointKey, disconnect bool) error {
 	e.op.Lock()
 	defer e.op.Unlock()
 	e.mu.Lock()
@@ -126,10 +178,23 @@ func (e *Engine) DeleteDevicePoint(id, deviceID string, key PointKey) error {
 		}
 		for j, p := range d.Points {
 			if p.Kind == key.Kind && p.Address == key.Address {
+				next := append([]Point{}, d.Points[:j]...)
+				next = append(next, d.Points[j+1:]...)
+				candidate := *d
+				candidate.Points = next
+				if err := validateRemoteReferences(*c, candidate); err != nil {
+					return err
+				}
+				if disconnect {
+					e.disconnectConfigurationLocked(id)
+					next = append([]Point{}, d.Points[:j]...)
+					next = append(next, d.Points[j+1:]...)
+				}
 				e.cancelDataLocked(id, d.ID)
-				d.Points = append(d.Points[:j], d.Points[j+1:]...)
+				d.Points = next
 				c.syncLegacy()
 				e.dirty = true
+				e.markConfigurationLocked()
 				return nil
 			}
 		}
@@ -158,6 +223,9 @@ func (e *Engine) ReplaceProjectAndStop(p Project, path string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.project = cloneProject(p)
+	e.markConfigurationLocked()
+	e.messageEpoch++
+	e.eventEpoch++
 	e.cancelDataLocked("", "")
 	e.dataJobs = nil
 	e.dataGeneration++
@@ -166,6 +234,7 @@ func (e *Engine) ReplaceProjectAndStop(p Project, path string) error {
 	e.dirty = false
 	e.states = map[string]ChannelState{}
 	e.messages = []Message{}
+	e.events = []PointEvent{}
 	return nil
 }
 

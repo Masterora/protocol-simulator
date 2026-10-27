@@ -12,11 +12,14 @@ import (
 )
 
 type AutoControlSeed struct {
-	Addresses string `json:"addresses"`
-	Value     string `json:"value"`
-	ValueType byte   `json:"valueType"`
+	ReplaceValues bool   `json:"replaceValues,omitempty"`
+	Addresses     string `json:"addresses"`
+	Value         string `json:"value"`
+	ValueType     byte   `json:"valueType"`
+	Function      byte   `json:"function,omitempty"`
 }
 type AutoControlOptions struct {
+	Function      byte `json:"function,omitempty"`
 	IntervalMS    int  `json:"intervalMs"`
 	TimeoutMS     int  `json:"timeoutMs"`
 	Double        bool `json:"double"`
@@ -41,6 +44,8 @@ type AutoControlRow struct {
 	Executed       string `json:"executed"`
 }
 type AutoControlSnapshot struct {
+	Saved      bool               `json:"saved"`
+	Protocol   string             `json:"protocol"`
 	ID         string             `json:"id"`
 	Channel    string             `json:"channel"`
 	Device     string             `json:"device"`
@@ -136,8 +141,8 @@ func (e *Engine) autoTarget(channel, device string) (Channel, Device, error) {
 		if c.ID != channel {
 			continue
 		}
-		if c.Protocol != "iec104" || c.Role != "client" {
-			return Channel{}, Device{}, errors.New("自动遥控／遥调需要 IEC104 主站")
+		if (c.Protocol != "iec104" && c.Protocol != "modbus-tcp" && c.Protocol != "modbus-rtu") || c.Role != "client" {
+			return Channel{}, Device{}, errors.New("自动遥控／遥调需要 IEC104 或 Modbus 主站")
 		}
 		d, err := deviceIn(&c, device)
 		if err != nil {
@@ -145,6 +150,7 @@ func (e *Engine) autoTarget(channel, device string) (Channel, Device, error) {
 		}
 		copy := *d
 		copy.Points = append([]Point{}, d.Points...)
+		copy.Configuration = cloneConfiguration(d.Configuration)
 		return c, copy, nil
 	}
 	return Channel{}, Device{}, errors.New("通道不存在")
@@ -155,7 +161,7 @@ func parseFeedback(text string) (uint32, bool, error) {
 	text = strings.TrimPrefix(text, "!")
 	n, err := strconv.ParseUint(text, 10, 24)
 	if err != nil {
-		return 0, false, errors.New("遥信关联应为地址，或 !地址（反向）")
+		return 0, false, errors.New("遥信关联应为点位，或 !点位（反向）")
 	}
 	return uint32(n), inverse, nil
 }
@@ -164,27 +170,30 @@ func parseFeedback(text string) (uint32, bool, error) {
 // Preserve that ordering and duplicates; reject invalid or unbounded expansions.
 func ParseAutoAddresses(text string) ([]uint32, error) {
 	if strings.TrimSpace(text) == "" {
-		return nil, errors.New("请输入遥调地址")
+		return nil, errors.New("请输入遥调点位")
+	}
+	if _, err := parsePointSpans(text, 0xffffff); err != nil {
+		return nil, err
 	}
 	singles, ranges := []uint32{}, [][2]uint32{}
 	count := 0
-	for _, part := range strings.Split(text, ",") {
+	for _, part := range strings.Split(strings.ReplaceAll(text, "，", ","), ",") {
 		part = strings.TrimSpace(part)
 		parts := strings.Split(part, "-")
 		if len(parts) > 2 || part == "" {
-			return nil, errors.New("遥调地址应为数字、范围和英文逗号")
+			return nil, errors.New("遥调点位应为数字、范围和英文逗号")
 		}
-		first, err := strconv.ParseUint(parts[0], 10, 24)
+		first, err := strconv.ParseUint(strings.TrimSpace(parts[0]), 10, 24)
 		if err != nil {
-			return nil, errors.New("遥调地址超出 24 位范围")
+			return nil, errors.New("遥调点位超出 24 位范围")
 		}
 		if len(parts) == 1 {
 			singles = append(singles, uint32(first))
 			count++
 		} else {
-			last, err := strconv.ParseUint(parts[1], 10, 24)
+			last, err := strconv.ParseUint(strings.TrimSpace(parts[1]), 10, 24)
 			if err != nil || last < first {
-				return nil, errors.New("范围后面的地址不得小于前面的地址")
+				return nil, errors.New("范围后面的点位不得小于前面的点位")
 			}
 			if last-first+1 > 10000 {
 				return nil, errors.New("一次最多 10000 个遥调点")
@@ -234,6 +243,21 @@ func validateAutoRow(mode string, r AutoControlRow, o AutoControlOptions) error 
 	if r.Count < 1 || r.Count > 1000000 {
 		return errors.New("遥控次数应为 1–1000000 整数")
 	}
+	if o.Function != 0 {
+		if r.Address > 65535 || o.Function != 5 && o.Function != 6 || mode == "yt" && o.Function != 6 {
+			return errors.New("Modbus自动控制点位或功能码无效")
+		}
+		if mode == "yt" {
+			v, err := parseAutoValue(r.Value)
+			if err != nil {
+				return err
+			}
+			if v < 0 || v > 65535 || math.Trunc(v) != v {
+				return errors.New("Modbus遥调值应为0–65535整数")
+			}
+			return nil
+		}
+	}
 	if mode == "yk" {
 		switch r.Action {
 		case "合闸后分闸", "分闸后合闸", "合闸", "分闸":
@@ -253,7 +277,7 @@ func (e *Engine) PrepareAutoControl(channel, device, mode string, seed AutoContr
 	if mode != "yk" && mode != "yt" {
 		return AutoControlSnapshot{}, errors.New("自动操作类型无效")
 	}
-	_, d, err := e.autoTarget(channel, device)
+	channelConfig, d, err := e.autoTarget(channel, device)
 	if err != nil {
 		return AutoControlSnapshot{}, err
 	}
@@ -268,7 +292,7 @@ func (e *Engine) PrepareAutoControl(channel, device, mode string, seed AutoContr
 		if mode == "yt" {
 			interval = 200
 		}
-		j = &autoControlJob{view: AutoControlSnapshot{ID: newID(), Channel: channel, Device: d.ID, Mode: mode, Status: "idle", Current: -1, Rows: []AutoControlRow{}, Errors: []string{}, Options: AutoControlOptions{IntervalMS: interval, TimeoutMS: 10000, AutoPause: true, ValueType: 48}}, wake: make(chan struct{}, 1)}
+		j = &autoControlJob{view: AutoControlSnapshot{ID: newID(), Protocol: channelConfig.Protocol, Channel: channel, Device: d.ID, Mode: mode, Status: "idle", Current: -1, Rows: []AutoControlRow{}, Errors: []string{}, Options: AutoControlOptions{IntervalMS: interval, TimeoutMS: 10000, AutoPause: true, ValueType: 48}}, wake: make(chan struct{}, 1)}
 		e.autoJobs[key] = j
 	}
 	e.autoMu.Unlock()
@@ -280,7 +304,7 @@ func (e *Engine) PrepareAutoControl(channel, device, mode string, seed AutoContr
 	rows := []AutoControlRow{}
 	if mode == "yk" {
 		for _, p := range d.Points {
-			if p.Kind != "yk" {
+			if controlCategory(dataPointCategory(channelConfig.Protocol, p)) != "yk" {
 				continue
 			}
 			r := AutoControlRow{Address: p.Address, Name: p.Name, Enabled: true, Action: "合闸后分闸", Count: 1, Feedback: p.Feedback, FeedbackName: "未关联"}
@@ -288,7 +312,7 @@ func (e *Engine) PrepareAutoControl(channel, device, mode string, seed AutoContr
 				address, _, failure := parseFeedback(p.Feedback)
 				if failure == nil {
 					for _, yx := range d.Points {
-						if yx.Kind == "yx" && yx.Address == address {
+						if dataPointCategory(channelConfig.Protocol, yx) == "yx" && yx.Address == address {
 							r.FeedbackName = yx.Name
 							if r.FeedbackName == "" {
 								r.FeedbackName = fmt.Sprintf("遥信%d", address)
@@ -312,6 +336,17 @@ func (e *Engine) PrepareAutoControl(channel, device, mode string, seed AutoContr
 			rows = append(rows, AutoControlRow{Address: address, Name: fmt.Sprintf("遥调%d", address), Value: seed.Value, Enabled: true, Count: 1, Executed: "否"})
 		}
 	}
+	if channelConfig.Protocol != "iec104" {
+		j.view.Options.Direct = true
+		j.view.Options.Double = false
+		j.view.Options.Function = seed.Function
+		if j.view.Options.Function == 0 {
+			j.view.Options.Function = 5
+			if mode == "yt" {
+				j.view.Options.Function = 6
+			}
+		}
+	}
 	j.view.Rows = rows
 	j.view.Status = "idle"
 	j.view.Generation++
@@ -321,7 +356,7 @@ func (e *Engine) PrepareAutoControl(channel, device, mode string, seed AutoContr
 	return j.cloneLocked(), nil
 }
 func (e *Engine) GetAutoControl(channel, device, mode string) (AutoControlSnapshot, error) {
-	j, err := e.autoJob(channel, device, mode)
+	j, err := e.savedAutoJob(channel, device, mode)
 	if err != nil {
 		return AutoControlSnapshot{}, err
 	}
@@ -334,7 +369,7 @@ func (e *Engine) ValidateAutoControlWindow(channel, device, mode string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	for _, c := range e.project.Channels {
-		if c.ID == channel && c.Protocol == "iec104" && c.Role == "client" {
+		if c.ID == channel && (c.Protocol == "iec104" || c.Protocol == "modbus-tcp" || c.Protocol == "modbus-rtu") && c.Role == "client" {
 			_, err := deviceIn(&c, device)
 			return err
 		}
@@ -362,6 +397,11 @@ func (e *Engine) UpdateAutoOptions(channel, device, mode string, o AutoControlOp
 		return AutoControlSnapshot{}, err
 	}
 	j.change(func(v *AutoControlSnapshot) {
+		if v.Protocol != "" && v.Protocol != "iec104" {
+			o.Function = v.Options.Function
+			o.Direct = true
+			o.Double = false
+		}
 		if mode == "yt" {
 			o.ValueType = v.Options.ValueType
 		}
@@ -458,7 +498,7 @@ func (e *Engine) reserveAuto(ctx context.Context, cancel context.CancelFunc, s *
 	}
 	for _, p := range peers {
 		p.mu.Lock()
-		if p.closed || !p.transfer || p.control != nil || p.batchOwner != "" || p.controlUncertain {
+		if p.closed || s.cfg.Protocol == "iec104" && !p.transfer || p.control != nil || len(p.pending) > 0 || p.batchOwner != "" || p.controlUncertain {
 			p.mu.Unlock()
 			release()
 			return nil, errors.New("通道尚未激活、存在待应答命令或已有自动任务")
@@ -566,7 +606,7 @@ func (e *Engine) PauseAutoControl(channel, device, mode string) (AutoControlSnap
 		return AutoControlSnapshot{}, err
 	}
 	j.change(func(v *AutoControlSnapshot) {
-		if v.Mode == "yk" && v.Status == "running" {
+		if v.Status == "running" {
 			v.Status = "paused"
 		}
 	})
@@ -624,6 +664,7 @@ func (e *Engine) resetAutoControls() {
 		j.stop()
 	}
 	e.autoJobs = map[string]*autoControlJob{}
+	e.autoDrafts = map[string]*autoControlJob{}
 	e.autoMu.Unlock()
 }
 func (j *autoControlJob) checkpoint(ctx context.Context) error {
@@ -716,8 +757,8 @@ func (e *Engine) runAutoControl(j *autoControlJob, ctx context.Context, origin *
 			return errors.New("原通道已停止或重新连接")
 		}
 		d, err := e.Device(view.Channel, view.Device)
-		if err != nil || d.CommonAddress != target.CommonAddress {
-			return errors.New("原装置已移除或地址已改变")
+		if err != nil || d.CommonAddress != target.CommonAddress || d.Unit != target.Unit {
+			return errors.New("原装置已移除或点位已改变")
 		}
 		return nil
 	}
@@ -725,13 +766,24 @@ func (e *Engine) runAutoControl(j *autoControlJob, ctx context.Context, origin *
 		if err := valid(); err != nil {
 			return err
 		}
+		if origin.cfg.Protocol != "iec104" {
+			if r.Operation == "select" {
+				return nil
+			}
+			fc := j.options().Function
+			pdu, err := WritePDU(fc, uint16(r.Address), uint16(r.Value))
+			if err != nil {
+				return err
+			}
+			return e.commandModbusContext(ctx, view.Channel, view.Device, pdu, r.TimeoutMS, view.ID)
+		}
 		r.batchID = view.ID
 		_, err := e.command104DeviceContext(ctx, view.Channel, view.Device, r)
 		return err
 	}
 	if view.Mode == "yt" {
 		for i := range view.Rows {
-			if ctx.Err() != nil {
+			if j.checkpoint(ctx) != nil {
 				return
 			}
 			r := j.row(i)
@@ -745,7 +797,7 @@ func (e *Engine) runAutoControl(j *autoControlJob, ctx context.Context, origin *
 				return
 			}
 			if err != nil {
-				j.failure(i, "execute", err.Error())
+				e.autoFailure(j, i, "execute", err.Error())
 				failed = true
 				return
 			}
@@ -779,7 +831,7 @@ func (e *Engine) runAutoControl(j *autoControlJob, ctx context.Context, origin *
 						return
 					}
 					if err := valid(); err != nil {
-						j.failure(i, "execute", err.Error())
+						e.autoFailure(j, i, "execute", err.Error())
 						failed = true
 						return
 					}
@@ -799,14 +851,21 @@ func (e *Engine) runAutoControl(j *autoControlJob, ctx context.Context, origin *
 						value++
 					}
 					request := Control104Request{Type: typ, Address: r.Address, Value: value, TimeoutMS: o.TimeoutMS, Operation: "select"}
-					if !o.Direct {
+					if !o.Direct && origin.cfg.Protocol == "iec104" {
 						j.change(func(v *AutoControlSnapshot) { v.Rows[i].Selection = prefix + "选择中.." })
 						err := command(request)
 						if ctx.Err() != nil {
 							return
 						}
 						if err != nil {
-							j.failure(i, "select", prefix+"选择失败："+err.Error())
+							e.autoFailure(j, i, "select", prefix+"选择失败："+err.Error())
+							if errors.Is(err, errControlUncertain) {
+								failed = true
+								return
+							}
+							if autoDelay(ctx, max(20, o.IntervalMS)) != nil {
+								return
+							}
 							continue
 						}
 						j.change(func(v *AutoControlSnapshot) { v.Rows[i].Selection = prefix + "选择成功" })
@@ -819,14 +878,32 @@ func (e *Engine) runAutoControl(j *autoControlJob, ctx context.Context, origin *
 						return
 					}
 					if err != nil {
-						j.failure(i, "execute", prefix+"执行失败："+err.Error())
-						if autoDelay(ctx, o.IntervalMS) != nil {
+						e.autoFailure(j, i, "execute", prefix+"执行失败："+err.Error())
+						if errors.Is(err, errControlUncertain) {
+							failed = true
+							return
+						}
+						if autoDelay(ctx, max(20, o.IntervalMS)) != nil {
 							return
 						}
 						continue
 					}
 					j.change(func(v *AutoControlSnapshot) { v.Rows[i].Execution = prefix + "执行成功" })
 					if o.CheckFeedback && r.Feedback != "" && r.FeedbackName != "未关联" {
+						if origin.cfg.Protocol != "iec104" {
+							addr, _, _ := parseFeedback(r.Feedback)
+							fc := byte(2)
+							for _, point := range target.Points {
+								if dataPointCategory(origin.cfg.Protocol, point) == "yx" && point.Address == addr && point.Kind == "coil" {
+									fc = 1
+								}
+							}
+							pdu, _ := ReadPDU(fc, uint16(addr), 1)
+							if err = e.commandModbusContext(ctx, view.Channel, view.Device, pdu, o.TimeoutMS, view.ID); err != nil {
+								e.autoFailure(j, i, "feedback", err.Error())
+								continue
+							}
+						}
 						j.change(func(v *AutoControlSnapshot) { v.Rows[i].FeedbackResult = "测试中" })
 						address, inverse, _ := parseFeedback(r.Feedback)
 						expected := on
@@ -844,7 +921,7 @@ func (e *Engine) runAutoControl(j *autoControlJob, ctx context.Context, origin *
 								break
 							}
 							for _, p := range d.Points {
-								if p.Kind == "yx" && p.Address == address && (p.Value != 0) == expected {
+								if dataPointCategory(origin.cfg.Protocol, p) == "yx" && p.Address == address && p.Quality&0x80 == 0 && (!(p.WireType == 3 || p.WireType == 31) || p.Value == 1 || p.Value == 2) && ((p.WireType == 3 || p.WireType == 31) && p.Value == 2 || p.WireType != 3 && p.WireType != 31 && p.Value != 0) == expected {
 									matched = true
 									break
 								}
@@ -857,7 +934,7 @@ func (e *Engine) runAutoControl(j *autoControlJob, ctx context.Context, origin *
 							}
 						}
 						if !matched {
-							j.failure(i, "feedback", prefix+"执行后：遥信点变位失败")
+							e.autoFailure(j, i, "feedback", prefix+"执行后：遥信点变位失败")
 							if autoDelay(ctx, o.IntervalMS) != nil {
 								return
 							}
@@ -882,4 +959,13 @@ func (e *Engine) runAutoControl(j *autoControlJob, ctx context.Context, origin *
 			}
 		}
 	}
+}
+
+func (e *Engine) autoFailure(j *autoControlJob, index int, stage, message string) {
+	j.failure(index, stage, message)
+	j.mu.Lock()
+	channel := j.view.Channel
+	address := j.view.Rows[index].Address
+	j.mu.Unlock()
+	e.log(channel, "", "ERR", nil, fmt.Sprintf("点位 %d：%s", address, message))
 }

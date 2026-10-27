@@ -36,9 +36,9 @@ def main():
     thread.start()
     env = dict(os.environ, GYLAB_SERIAL_A=os.ttyname(pairs[0][1]), GYLAB_SERIAL_B=os.ttyname(pairs[1][1]))
     try:
-        result = subprocess.run(['go', 'test', './internal/core', '-run', '^TestSerialTransportLoopback$',
-                                 '-v', '-count=1', '-race', '-timeout=45s'],
-                                cwd=Path(__file__).resolve().parents[1], env=env, timeout=90)
+        result = subprocess.run(['go', 'test', './internal/core', '-run', '^(TestSerialTransportLoopback|TestScaleSerialFullTablesAndMappings)$',
+                                 '-v', '-count=1', '-race', '-timeout=90s'],
+                                cwd=Path(__file__).resolve().parents[1], env=env, timeout=110)
         return result.returncode
     finally:
         stop.set()

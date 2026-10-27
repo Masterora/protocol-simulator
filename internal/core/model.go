@@ -31,13 +31,14 @@ type PointKey struct {
 }
 
 type Device struct {
-	AutoData      *AutoDataConfig      `json:"autoData,omitempty"`
-	Configuration *DeviceConfiguration `json:"configuration,omitempty"`
-	ID            string               `json:"id"`
-	Name          string               `json:"name"`
-	Unit          byte                 `json:"unit"`
-	CommonAddress uint16               `json:"commonAddress"`
-	Points        []Point              `json:"points"`
+	DataTests     map[string]*AutoDataConfig `json:"dataTests,omitempty"`
+	AutoData      *AutoDataConfig            `json:"autoData,omitempty"`
+	Configuration *DeviceConfiguration       `json:"configuration,omitempty"`
+	ID            string                     `json:"id"`
+	Name          string                     `json:"name"`
+	Unit          byte                       `json:"unit"`
+	CommonAddress uint16                     `json:"commonAddress"`
+	Points        []Point                    `json:"points"`
 }
 
 type Channel struct {
@@ -67,13 +68,14 @@ type Project struct {
 }
 
 type ChannelState struct {
-	ID        string `json:"id"`
-	Status    string `json:"status"`
-	Address   string `json:"address"`
-	TX        uint64 `json:"tx"`
-	RX        uint64 `json:"rx"`
-	Peers     int    `json:"peers"`
-	LastError string `json:"lastError"`
+	ID         string `json:"id"`
+	Status     string `json:"status"`
+	Address    string `json:"address"`
+	TX         uint64 `json:"tx"`
+	RX         uint64 `json:"rx"`
+	Peers      int    `json:"peers"`
+	ReadyPeers int    `json:"readyPeers"`
+	LastError  string `json:"lastError"`
 }
 
 type Message struct {
@@ -198,32 +200,59 @@ func (c Channel) Validate() error {
 		if c.Protocol == "iec104" {
 			address = d.CommonAddress
 			if address == 0 || address == 65535 {
-				return errors.New("104 公共地址应为 1–65534")
+				return errors.New("104 公共点位应为 1–65534")
 			}
 		}
 		if c.Protocol == "modbus-rtu" && (d.Unit > 247 || (c.Role == "server" && d.Unit == 0)) {
-			return errors.New("RTU 子站地址为 1–247，主站可用 0 广播写入")
+			return errors.New("RTU 子站点位为 1–247，主站可用 0 广播写入")
 		}
 		if addresses[address] {
-			return errors.New("同一通道装置地址不能重复")
+			return errors.New("同一通道装置点位不能重复")
 		}
 		addresses[address] = true
 		if c.Protocol == "iec104" {
 			_, caBytes, ioaBytes := layout104(d)
 			if uint32(d.CommonAddress) >= 1<<uint(caBytes*8) {
-				return errors.New("公共地址超出配置字节数")
+				return errors.New("公共点位超出配置字节数")
 			}
 			for _, point := range d.Points {
 				if point.Address >= 1<<uint(ioaBytes*8) {
-					return errors.New("信息体地址超出配置字节数")
+					return errors.New("信息体点位超出配置字节数")
 				}
 			}
 		}
-		if err := validatePoints(d.Points, c.Protocol); err != nil {
+		validationPoints := deviceValidationPoints(c.Protocol, d, d.Points)
+		if err := validatePoints(validationPoints, c.Protocol); err != nil {
 			return fmt.Errorf("%s：%w", d.Name, err)
 		}
-		if err := validateAutoData(c.Protocol, c.Role, d.AutoData, d.Points...); err != nil {
+		if d.Configuration != nil {
+			if err := validateRelations(c.Protocol, c.Role, d, d.Configuration.Relations); err != nil {
+				return err
+			}
+			for mode, recipe := range d.Configuration.AutoTests {
+				if c.Role != "client" {
+					return errors.New("自动操作配置仅适用于主站")
+				}
+				if err := validateAutoRecipe(mode, recipe); err != nil {
+					return err
+				}
+			}
+			for category, simulation := range d.Configuration.Controls {
+				if err := validateControlSimulation(c.Protocol, c.Role, d, category, simulation); err != nil {
+					return err
+				}
+			}
+		}
+		if err := validateAutoData(c.Protocol, c.Role, d.AutoData, validationPoints...); err != nil {
 			return err
+		}
+		for category, config := range d.DataTests {
+			if dataTestCategory(category) == "" {
+				return errors.New("无效的独立测试分类")
+			}
+			if err := validateDataTest(c.Protocol, c.Role, category, config, validationPoints...); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -232,7 +261,7 @@ func (c Channel) Validate() error {
 func checkAddress(addr string, allowZero bool) error {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil || host == "" {
-		return fmt.Errorf("地址应为 主机:端口，例如 127.0.0.1:2404")
+		return fmt.Errorf("网络端点应为 主机:端口，例如 127.0.0.1:2404")
 	}
 	n, err := strconv.Atoi(port)
 	if err != nil || n < 0 || n > 65535 || (n == 0 && !allowZero) {
@@ -261,7 +290,7 @@ func validatePoints(points []Point, protocol string) error {
 			}
 		}
 		if p.Address > 0xffffff {
-			return errors.New("信息体地址超出 24 位范围")
+			return errors.New("信息体点位超出 24 位范围")
 		}
 		if protocol == "iec104" && p.Kind != "yx" && p.Kind != "yc" && p.Kind != "yk" && p.Kind != "yt" && p.Kind != "step" && p.Kind != "mc" && p.Kind != "position" {
 			return errors.New("104 点类型无效")
@@ -271,7 +300,7 @@ func validatePoints(points []Point, protocol string) error {
 				return errors.New("Modbus 点类型无效")
 			}
 			if p.Address > 65535 {
-				return errors.New("Modbus 地址超出 16 位范围")
+				return errors.New("Modbus 点位超出 16 位范围")
 			}
 			if p.Kind == "coil" || p.Kind == "discrete" {
 				if p.Value != 0 && p.Value != 1 {
@@ -292,13 +321,13 @@ func validatePoints(points []Point, protocol string) error {
 		}
 		key := fmt.Sprintf("%s:%d", p.Kind, p.Address)
 		if seen[key] {
-			return fmt.Errorf("点表地址重复：%s", key)
+			return fmt.Errorf("点表点位重复：%s", key)
 		}
 		seen[key] = true
 		if strings.HasPrefix(protocol, "modbus") && (p.Kind == "holding" || p.Kind == "input") && registerWidth(p) == 2 {
 			second := fmt.Sprintf("%s:%d", p.Kind, p.Address+1)
 			if seen[second] {
-				return errors.New("多寄存器点位地址重叠")
+				return errors.New("多寄存器点位重叠")
 			}
 			seen[second] = true
 		}

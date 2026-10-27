@@ -16,12 +16,26 @@ type delayedASDU struct {
 }
 
 func (p *peer) device104() Device {
-	ds := p.s.e.devices(p.s.cfg.ID)
-	if len(ds) == 0 {
-		return Device{}
+	// Framing, acknowledgements and timers only need link settings. Copying the
+	// full point table here allocates megabytes for every frame at large scales.
+	e := p.s.e
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, c := range e.project.Channels {
+		if c.ID != p.s.cfg.ID || len(c.Devices) == 0 {
+			continue
+		}
+		source := c.Devices[0]
+		d := Device{ID: source.ID, Name: source.Name, Unit: source.Unit, CommonAddress: source.CommonAddress}
+		if source.Configuration != nil {
+			d.Configuration = &DeviceConfiguration{Version: source.Configuration.Version, Values: make(map[string]string, len(source.Configuration.Values))}
+			for key, v := range source.Configuration.Values {
+				d.Configuration.Values[key] = v
+			}
+		}
+		return d
 	}
-	d, _ := p.s.e.Device(p.s.cfg.ID, ds[0].ID)
-	return d
+	return Device{}
 }
 func (p *peer) tracked104(d Device, a []byte, now time.Time) error {
 	p.mu.Lock()
@@ -111,7 +125,7 @@ func (p *peer) periodic(now time.Time) {
 			}
 			period := time.Duration(number(d, "txtSendInterval", 200)) * time.Millisecond
 			p.mu.Lock()
-			pending := len(p.pending) > 0
+			pending := len(p.pending) > 0 || p.batchOwner != "" || p.controlUncertain
 			p.mu.Unlock()
 			if pending {
 				return
@@ -164,7 +178,7 @@ func modbusPollTasks(d Device) [][]byte {
 		return tasks
 	}
 	for _, r := range d.Configuration.Ranges {
-		if r.Tab == "yk" || r.Count == 0 {
+		if r.Tab == "yk" || r.Tab == "yt" || r.Count == 0 {
 			continue
 		}
 		fc := map[string]byte{"coil": 1, "discrete": 2, "holding": 3, "input": 4}[r.Kind]
@@ -183,14 +197,23 @@ func modbusPollTasks(d Device) [][]byte {
 			max = 2000
 		}
 		max -= max % width
-		for offset := 0; offset < r.Count*width; {
-			qty := min(max, r.Count*width-offset)
-			a, err := ReadPDU(fc, uint16(r.Address)+uint16(offset), uint16(qty))
-			if err == nil {
+		points, err := rangePointNumbers("modbus-tcp", d.Configuration, r)
+		if err != nil {
+			continue
+		}
+		for i := 0; i < len(points); {
+			start := points[i]
+			count := width
+			i++
+			for i < len(points) && points[i] == start+uint32(count) && count+width <= max {
+				count += width
+				i++
+			}
+			if a, err := ReadPDU(fc, uint16(start), uint16(count)); err == nil {
 				tasks = append(tasks, a)
 			}
-			offset += qty
 		}
+
 	}
 	if flag(d, "cb_ReadEvent", false) {
 		addr, _ := parseAddress(value(d, "txtEventAddr", "500H"), 65535)
@@ -250,7 +273,7 @@ func (p *peer) standardService(d Device, a []byte) (bool, error) {
 		return false, nil
 	}
 	if a[1] != 1 || len(a) < 10 || a[6] != 0 || a[7] != 0 || a[8] != 0 {
-		return true, fmt.Errorf("服务命令地址或长度无效")
+		return true, fmt.Errorf("服务命令点位或长度无效")
 	}
 	if a[0] == 103 {
 		if len(a) != 16 {

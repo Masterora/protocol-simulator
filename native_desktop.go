@@ -35,6 +35,7 @@ type NativeContext struct {
 	Role       string                  `json:"role"`
 	Edit       bool                    `json:"edit"`
 	Point      string                  `json:"point"`
+	Selection  string                  `json:"selection,omitempty"`
 	PointKind  string                  `json:"pointKind"`
 	Ask        json.RawMessage         `json:"ask,omitempty"`
 	Activate   int                     `json:"activate"`
@@ -57,11 +58,20 @@ type nativeSession struct {
 	layout  nativeLayout
 }
 type nativeLayout struct {
-	ViewportWidth  int `json:"viewportWidth"`
-	ViewportHeight int `json:"viewportHeight"`
-	DocumentWidth  int `json:"documentWidth"`
-	DialogWidth    int `json:"dialogWidth"`
-	Controls       int `json:"controls"`
+	ContentBottom        int  `json:"contentBottom"`
+	SaveButtonBottom     int  `json:"saveButtonBottom"`
+	ViewportWidth        int  `json:"viewportWidth"`
+	ViewportHeight       int  `json:"viewportHeight"`
+	DocumentWidth        int  `json:"documentWidth"`
+	DialogWidth          int  `json:"dialogWidth"`
+	Controls             int  `json:"controls"`
+	WrappedLabels        int  `json:"wrappedLabels"`
+	MinInputWidth        int  `json:"minInputWidth"`
+	InputAlignmentDelta  int  `json:"inputAlignmentDelta"`
+	DevicePointFields    int  `json:"devicePointFields"`
+	QualityCheckboxLeft  bool `json:"qualityCheckboxLeft"`
+	EditorSaveButtons    int  `json:"editorSaveButtons"`
+	EditorRuntimeButtons int  `json:"editorRuntimeButtons"`
 }
 type nativeWindows struct {
 	mu             sync.Mutex
@@ -154,6 +164,9 @@ func (n *nativeWindows) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		n.mu.Unlock()
 		value = c
+		if deviceTaskWindow(c.Kind) && c.Generation != 0 && c.Generation != n.app.engine.DeviceWindowGeneration() {
+			err = errors.New("工程已更换，请重新打开配置窗口")
+		}
 		if c.Kind == "auto-data-dialog" {
 			var view core.AutoDataSnapshot
 			view, err = n.app.engine.GetAutoData(c.Channel, c.Device)
@@ -206,13 +219,17 @@ func (n *nativeWindows) serve(w http.ResponseWriter, r *http.Request) {
 // Only editor operations are reachable over IPC. File dialogs and application
 // lifecycle methods always run in the owning desktop window.
 var nativeMethods = map[string]bool{
-	"GetAutoData": true, "SaveAutoData": true, "StartAutoData": true, "SetAutoDataState": true,
+	"GetAutoControlDetails": true,
+	"GetAutoControlStatus":  true, "GetView": true, "GetAutoData": true, "SaveAutoData": true, "StartAutoData": true, "SetAutoDataState": true,
+	"SetTelemetryRange":    true,
+	"GetControlSimulation": true, "SaveControlSimulation": true,
+	"GetDataTest": true, "SaveDataTest": true, "StartDataTest": true, "SetDataTestState": true,
 	"ReadClockDevice": true, "ClearEvents": true, "ClockSyncDevice": true, "CounterInterrogateDevice": true, "GetSnapshot": true, "SerialPorts": true, "LocalIPs": true, "UpsertChannel": true, "UpsertDevice": true,
 	"PatchDevicePoint": true, "StartChannel": true, "StopChannel": true, "StopAll": true,
 	"SetPointValue": true, "EditPointCell": true,
 	"AskNative": true, "UpdateTransport": true, "RenameChannel": true,
 	"Command104Device":   true,
-	"PrepareAutoControl": true, "GetAutoControl": true, "UpdateAutoOptions": true, "UpdateAutoRows": true,
+	"PrepareAutoControl": true, "GetAutoControl": true, "GetAutoControlDraft": true, "SaveAutoControlDraft": true, "UpdateAutoOptions": true, "UpdateAutoRows": true,
 	"ApplyAutoBulk": true, "StartAutoControl": true, "PauseAutoControl": true, "ResumeAutoControl": true, "StopAutoControl": true,
 	"OpenAutoBulk":     true,
 	"SetAutoValueType": true,
@@ -312,15 +329,14 @@ func (a *App) GetNativeContext() (NativeContext, error) {
 }
 func (a *App) CloseNativeWindow() {
 	if a.remote != nil {
-		if reusableNativeWindow(a.remote.kind) {
-			runtime.WindowHide(a.ctx)
-			return
-		}
 		a.QuitNativeWindow()
 	}
 }
 func isAutoWindow(kind string) bool {
 	return kind == "auto-yk-dialog" || kind == "auto-yt-dialog" || kind == "auto-bulk-dialog"
+}
+func deviceTaskWindow(kind string) bool {
+	return kind == "auto-data-dialog" || kind == "remote-config-dialog" || kind == "telemetry-values-dialog"
 }
 func reusableNativeWindow(kind string) bool {
 	return isAutoWindow(kind) || kind == "auto-data-dialog" || kind == "channel-dialog" || kind == "device-dialog"
@@ -343,8 +359,8 @@ func (a *App) ActivateNativeWindow() {
 	}
 }
 
-// Native activation must keep working after a window has been hidden for a
-// long time; WebView background timers may be throttled by Chromium.
+// Activate existing visible/minimized editors using the owning process,
+// independent of WebView background timer throttling. Closed editors exit.
 func (a *App) watchNativeWindow(ctx context.Context) {
 	watch, cancel := context.WithCancel(ctx)
 	a.nativeWatchCancel = cancel
@@ -377,9 +393,9 @@ func (a *App) FitAutoWindow(clientWidth, clientHeight int) {
 	width, height := 0, 0
 	switch a.remote.kind {
 	case "auto-yk-dialog":
-		width, height = 925, 402
+		width, height = 740, 340
 	case "auto-yt-dialog":
-		width, height = 516, 386
+		width, height = 516, 286
 	default:
 		return
 	}
@@ -393,7 +409,7 @@ func (a *App) FitAutoWindow(clientWidth, clientHeight int) {
 	runtime.WindowSetSize(a.ctx, outerWidth, outerHeight)
 }
 func (a *App) FitConfigWindow(clientWidth, clientHeight, targetWidth, targetHeight int) {
-	if a.remote == nil || (a.remote.kind != "channel-dialog" && a.remote.kind != "device-dialog") || clientWidth < 100 || clientHeight < 50 || targetWidth < 280 || targetWidth > 600 || targetHeight < 110 || targetHeight > 1000 {
+	if a.remote == nil || (a.remote.kind != "channel-dialog" && a.remote.kind != "device-dialog") || clientWidth < 100 || clientHeight < 50 || targetWidth < 280 || targetWidth > 800 || targetHeight < 110 || targetHeight > 1000 {
 		return
 	}
 	w, h := runtime.WindowGetSize(a.ctx)
@@ -401,7 +417,11 @@ func (a *App) FitConfigWindow(clientWidth, clientHeight, targetWidth, targetHeig
 	if w < 280 || h < 110 || w > 1000 || h > 1500 {
 		return
 	}
-	runtime.WindowSetMinSize(a.ctx, 280, 110)
+	minWidth := 280
+	if a.remote.kind == "device-dialog" {
+		minWidth = w
+	}
+	runtime.WindowSetMinSize(a.ctx, minWidth, 110)
 	runtime.WindowSetSize(a.ctx, w, h)
 }
 func (a *App) SetNativeSelection(c NativeContext) {
@@ -414,8 +434,18 @@ func (a *App) SetNativeSelection(c NativeContext) {
 
 func windowTitle(c NativeContext) string {
 	switch c.Kind {
+	case "telemetry-values-dialog":
+		if strings.TrimPrefix(c.PointKind, "tab:") == "yc" {
+			return "遥测批量设置"
+		}
+		return "遥信批量设置"
+	case "remote-config-dialog":
+		if c.PointKind == "yt" || c.PointKind == "tab:yt" {
+			return "遥调配置"
+		}
+		return "遥控配置"
 	case "auto-data-dialog":
-		return "自动数据"
+		return "自动上报配置"
 	case "auto-yk-dialog":
 		return "自动遥控窗口"
 	case "auto-yt-dialog":
@@ -453,8 +483,12 @@ func windowTitle(c NativeContext) string {
 	return "protocol-simulator"
 }
 func (n *nativeWindows) open(c NativeContext) (*nativeSession, error) {
+	if c.Kind == "auto-data-dialog" {
+		c.PointKind = "telemetry"
+		c.Point = ""
+	}
 	switch c.Kind {
-	case "channel-dialog", "device-dialog", "point-dialog", "manager-dialog", "confirm-dialog", "control-dialog", "auto-yk-dialog", "auto-yt-dialog", "auto-bulk-dialog", "auto-data-dialog", "events-dialog":
+	case "channel-dialog", "device-dialog", "point-dialog", "manager-dialog", "confirm-dialog", "control-dialog", "auto-yk-dialog", "auto-yt-dialog", "auto-bulk-dialog", "auto-data-dialog", "remote-config-dialog", "telemetry-values-dialog", "events-dialog":
 	default:
 		return nil, errors.New("无效窗口")
 	}
@@ -465,10 +499,10 @@ func (n *nativeWindows) open(c NativeContext) (*nativeSession, error) {
 	}
 	for _, s := range n.sessions {
 		v := s.context
-		if c.Kind == "auto-data-dialog" && c.Generation != v.Generation {
+		if deviceTaskWindow(c.Kind) && c.Generation != v.Generation {
 			continue
 		}
-		if c.Kind != "confirm-dialog" && v.Kind == c.Kind && v.Role == c.Role && v.Edit == c.Edit && (c.Kind == "channel-dialog" || !c.Edit && c.Kind != "auto-data-dialog" || v.Channel == c.Channel && v.Device == c.Device) && v.Point == c.Point {
+		if c.Kind != "confirm-dialog" && v.Kind == c.Kind && v.Role == c.Role && v.Edit == c.Edit && (c.Kind == "channel-dialog" || !c.Edit && c.Kind != "auto-data-dialog" || v.Channel == c.Channel && v.Device == c.Device) && v.Point == c.Point && (c.Kind != "auto-data-dialog" && c.Kind != "remote-config-dialog" && c.Kind != "telemetry-values-dialog" || strings.TrimPrefix(v.PointKind, "tab:") == strings.TrimPrefix(c.PointKind, "tab:")) {
 			s.context.Position = c.Position
 			if c.Kind == "channel-dialog" {
 				s.context.Channel = c.Channel
@@ -501,6 +535,9 @@ func (n *nativeWindows) open(c NativeContext) (*nativeSession, error) {
 	}
 	go func() {
 		_ = cmd.Wait()
+		if c.Kind == "auto-yk-dialog" || c.Kind == "auto-yt-dialog" {
+			n.app.engine.DiscardAutoControlDraft(c.Channel, c.Device, strings.TrimSuffix(strings.TrimPrefix(c.Kind, "auto-"), "-dialog"))
+		}
 		n.mu.Lock()
 		delete(n.sessions, id)
 		n.mu.Unlock()
@@ -514,6 +551,9 @@ func (n *nativeWindows) open(c NativeContext) (*nativeSession, error) {
 func (a *App) OpenNativeWindow(c NativeContext) error {
 	if a.native == nil {
 		return errors.New("窗口服务未启动")
+	}
+	if deviceTaskWindow(c.Kind) {
+		c.Generation = a.engine.DeviceWindowGeneration()
 	}
 	if c.Kind == "auto-data-dialog" {
 		view, err := a.engine.GetAutoData(c.Channel, c.Device)

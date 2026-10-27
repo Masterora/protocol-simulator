@@ -15,12 +15,18 @@ import (
 )
 
 type Engine struct {
+	viewClock      uint64
+	viewMetadata   uint64
+	viewPoints     map[string]*pointRevision
+	messageEpoch   uint64
+	eventEpoch     uint64
 	events         []PointEvent
 	eventSequence  uint64
 	dataGeneration uint64
 	dataJobs       map[string]*autoDataJob
 	autoMu         sync.Mutex
 	autoJobs       map[string]*autoControlJob
+	autoDrafts     map[string]*autoControlJob
 	op             sync.Mutex
 	mu             sync.Mutex
 	project        Project
@@ -33,7 +39,7 @@ type Engine struct {
 }
 
 func NewEngine() *Engine {
-	return &Engine{dataGeneration: 1, project: Project{Version: 1, Name: "工程1", Channels: []Channel{}}, running: map[string]*session{}, states: map[string]ChannelState{}, messages: []Message{}}
+	return &Engine{viewClock: 1, viewMetadata: 1, dataGeneration: 1, project: Project{Version: 1, Name: "工程1", Channels: []Channel{}}, running: map[string]*session{}, states: map[string]ChannelState{}, messages: []Message{}}
 }
 func newID() string { b := make([]byte, 8); _, _ = rand.Read(b); return hex.EncodeToString(b) }
 func cloneProject(p Project) Project {
@@ -47,6 +53,7 @@ func cloneProject(p Project) Project {
 				p.Channels[i].Devices[j].Points = append([]Point{}, p.Channels[i].Devices[j].Points...)
 				p.Channels[i].Devices[j].Configuration = cloneConfiguration(p.Channels[i].Devices[j].Configuration)
 				p.Channels[i].Devices[j].AutoData = cloneAutoData(p.Channels[i].Devices[j].AutoData)
+				p.Channels[i].Devices[j].DataTests = cloneDataTests(p.Channels[i].Devices[j].DataTests)
 			}
 			p.Channels[i].syncLegacy()
 		}
@@ -56,20 +63,40 @@ func cloneProject(p Project) Project {
 
 func (e *Engine) Snapshot() Snapshot {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	states := make([]ChannelState, 0, len(e.project.Channels))
+	transfers := map[string]*session{}
 	for _, c := range e.project.Channels {
 		s, ok := e.states[c.ID]
 		if !ok {
 			s = ChannelState{ID: c.ID, Status: "stopped", Address: c.Address}
 		}
 		states = append(states, s)
+		if c.Protocol == "iec104" {
+			transfers[c.ID] = e.running[c.ID]
+		}
 	}
-	return Snapshot{Project: cloneProject(e.project), States: states, Messages: append([]Message{}, e.messages...), Path: e.path, Dirty: e.dirty, Events: append([]PointEvent{}, e.events...)}
+	snapshot := Snapshot{Project: cloneProject(e.project), States: states, Messages: append([]Message{}, e.messages...), Path: e.path, Dirty: e.dirty, Events: append([]PointEvent{}, e.events...)}
+	e.mu.Unlock()
+	// Peer locks must be taken after releasing Engine.mu: protocol handling logs
+	// frames while holding its peer lock. TCP establishment alone is not STARTDT.
+	for i := range snapshot.States {
+		state := &snapshot.States[i]
+		if transport, iec104 := transfers[state.ID]; iec104 {
+			if transport != nil {
+				state.ReadyPeers = len(readyDataPeers(transport))
+			}
+		} else {
+			state.ReadyPeers = state.Peers
+		}
+	}
+	return snapshot
 }
 func (e *Engine) log(id, peer, direction string, data []byte, summary string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.logLocked(id, peer, direction, data, summary)
+}
+func (e *Engine) logLocked(id, peer, direction string, data []byte, summary string) {
 	e.sequence++
 	e.messages = append(e.messages, Message{Sequence: e.sequence, Time: time.Now().Format("15:04:05.000"), ChannelID: id, Peer: peer, Direction: direction, Hex: strings.ToUpper(hex.EncodeToString(data)), Summary: summary})
 	if len(e.messages) > 2000 {
@@ -95,7 +122,12 @@ func (e *Engine) state(s *session, fn func(*ChannelState)) {
 	fn(&v)
 	e.states[s.cfg.ID] = v
 }
-func (e *Engine) ClearMessages() { e.mu.Lock(); e.messages = []Message{}; e.mu.Unlock() }
+func (e *Engine) ClearMessages() {
+	e.mu.Lock()
+	e.messages = []Message{}
+	e.messageEpoch++
+	e.mu.Unlock()
+}
 func (e *Engine) points(id string) []Point {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -128,6 +160,7 @@ func (e *Engine) UpsertChannel(c Channel) (string, error) {
 		if e.project.Channels[i].ID == c.ID {
 			e.project.Channels[i] = c
 			e.dirty = true
+			e.markConfigurationLocked()
 			delete(e.states, c.ID)
 			return c.ID, nil
 		}
@@ -137,6 +170,7 @@ func (e *Engine) UpsertChannel(c Channel) (string, error) {
 	}
 	e.project.Channels = append(e.project.Channels, c)
 	e.dirty = true
+	e.markConfigurationLocked()
 	return c.ID, nil
 }
 func (e *Engine) DeleteChannel(id string) error {
@@ -152,6 +186,7 @@ func (e *Engine) DeleteChannel(id string) error {
 			e.project.Channels = append(e.project.Channels[:i], e.project.Channels[i+1:]...)
 			delete(e.states, id)
 			e.dirty = true
+			e.markConfigurationLocked()
 			return nil
 		}
 	}
@@ -174,6 +209,9 @@ func (e *Engine) ReplaceProject(p Project, path string) error {
 	e.dataJobs = nil
 	e.dataGeneration++
 	e.project = cloneProject(p)
+	e.markConfigurationLocked()
+	e.messageEpoch++
+	e.eventEpoch++
 	e.path = path
 	e.dirty = false
 	e.states = map[string]ChannelState{}
@@ -181,27 +219,40 @@ func (e *Engine) ReplaceProject(p Project, path string) error {
 	e.events = []PointEvent{}
 	return nil
 }
+
+// Large projects are bounded on both read and write. Stream decoding avoids
+// retaining a second raw byte buffer and string beside the decoded point tables.
+const maxProjectFileBytes int64 = 512 << 20
+
 func (e *Engine) Load(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, 16*1024*1024+1))
+	info, err := f.Stat()
 	if err != nil {
 		return err
 	}
-	if len(b) > 16*1024*1024 {
-		return errors.New("工程文件超过 16MB")
+	if info.Size() > maxProjectFileBytes {
+		return fmt.Errorf("工程文件超过 %dMB", maxProjectFileBytes>>20)
 	}
-	var p Project
-	decoder := json.NewDecoder(strings.NewReader(string(b)))
+	reader := &io.LimitedReader{R: f, N: maxProjectFileBytes + 1}
+	decoder := json.NewDecoder(reader)
 	decoder.DisallowUnknownFields()
+	var p Project
 	if err = decoder.Decode(&p); err != nil {
+		if reader.N == 0 {
+			return fmt.Errorf("工程文件超过 %dMB", maxProjectFileBytes>>20)
+		}
 		return fmt.Errorf("工程解析失败：%w", err)
 	}
 	var trailing any
-	if decoder.Decode(&trailing) != io.EOF {
+	err = decoder.Decode(&trailing)
+	if reader.N == 0 {
+		return fmt.Errorf("工程文件超过 %dMB", maxProjectFileBytes>>20)
+	}
+	if err != io.EOF {
 		return errors.New("工程文件包含多余内容")
 	}
 	return e.ReplaceProject(p, path)
@@ -222,6 +273,9 @@ func (e *Engine) Save(path string) error {
 	persisted := cloneProject(e.project)
 	persisted.Name = name
 	persisted.Version = 2
+	if err := validateProject(&persisted); err != nil {
+		return fmt.Errorf("工程未保存：%w", err)
+	}
 	for i := range persisted.Channels {
 		persisted.Channels[i].Points = nil
 	}
@@ -229,8 +283,8 @@ func (e *Engine) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	if len(b) > 16*1024*1024 {
-		return errors.New("工程超过 16MB，请减少点表后保存")
+	if int64(len(b)) > maxProjectFileBytes {
+		return fmt.Errorf("工程超过 %dMB，请减少点表后保存", maxProjectFileBytes>>20)
 	}
 	if err = AtomicWrite(path, b); err != nil {
 		return err
@@ -412,4 +466,10 @@ func (e *Engine) Demo(protocol string) (string, error) {
 		return "", err
 	}
 	return id, nil
+}
+
+func (e *Engine) DeviceWindowGeneration() uint64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.dataGeneration
 }

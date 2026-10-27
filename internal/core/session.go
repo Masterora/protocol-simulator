@@ -2,13 +2,13 @@ package core
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"sort"
 	"sync"
 	"time"
 
@@ -29,6 +29,7 @@ type session struct {
 	wg           sync.WaitGroup
 }
 type pendingRequest struct {
+	result   chan error
 	purpose  string
 	deviceID string
 	unit     byte
@@ -48,6 +49,7 @@ type peer struct {
 	scheduled        map[byte]scheduledCommand
 	nextRun          map[string]time.Time
 	pollIndex        map[string]int
+	observed         map[string]map[PointKey]Point
 	delayed          []delayedASDU
 	rxConfirmed      uint16
 	ackSince         time.Time
@@ -413,7 +415,7 @@ func describe(protocol string, b []byte) string {
 		}
 	case "modbus-rtu":
 		if len(b) > 1 {
-			return fmt.Sprintf("Modbus RTU · 地址=%d · FC=%02X", b[0], b[1])
+			return fmt.Sprintf("Modbus RTU · 点位=%d · FC=%02X", b[0], b[1])
 		}
 	case "iec104":
 		if len(b) >= 6 {
@@ -446,11 +448,14 @@ func (s *session) requestDeviceModbusMode(d Device, pdu []byte, purpose string) 
 		return errors.New("此操作需要 Modbus 主站")
 	}
 	if s.cfg.Protocol == "modbus-rtu" && d.Unit == 0 && pdu[0] <= 4 {
-		return errors.New("RTU 广播地址不能读取数据")
+		return errors.New("RTU 广播点位不能读取数据")
 	}
 	return s.forPeers(func(p *peer) error {
 		p.mu.Lock()
 		defer p.mu.Unlock()
+		if p.batchOwner != "" || p.controlUncertain {
+			return errors.New("自动任务正在执行或控制结果未知，请结束任务或重连")
+		}
 		if len(p.pending) >= 32 || (s.cfg.Protocol == "modbus-rtu" && len(p.pending) > 0) {
 			return errors.New("已有请求等待应答，请稍后重试")
 		}
@@ -469,7 +474,11 @@ func (s *session) requestDeviceModbusMode(d Device, pdu []byte, purpose string) 
 				return p.writeLocked(b, "RTU 广播写入（不等待应答）")
 			}
 		}
-		p.pending[tid] = pendingRequest{purpose: purpose, deviceID: d.ID, unit: d.Unit, pdu: append([]byte{}, pdu...), until: time.Now().Add(time.Duration(number(d, "txt_overTime", number(d, "txtTimeOut", s.cfg.TimeoutMS/1000))) * time.Second)}
+		timeout := time.Duration(s.cfg.TimeoutMS) * time.Millisecond
+		if value(d, "txt_overTime", value(d, "txtTimeOut", "")) != "" {
+			timeout = seconds(d, "txt_overTime", number(d, "txtTimeOut", 3))
+		}
+		p.pending[tid] = pendingRequest{purpose: purpose, deviceID: d.ID, unit: d.Unit, pdu: append([]byte{}, pdu...), until: time.Now().Add(timeout)}
 		if err := p.writeLocked(b, "Modbus 请求 · "+d.Name); err != nil {
 			delete(p.pending, tid)
 			return err
@@ -506,6 +515,37 @@ func (p *peer) handleModbus(b []byte) error {
 				reply = clockReply
 				updates = nil
 			}
+			if len(updates) > 0 {
+				category := controlCategory(dataPointCategory(s.cfg.Protocol, updates[0]))
+				if category != "yk" && category != "yt" {
+					category = "yt"
+				}
+				if pdu[0] == 5 || pdu[0] == 15 {
+					category = "yk"
+				}
+				cfg := simulationFor(d, category)
+				if cfg.Mode == "silent" {
+					continue
+				}
+				if cfg.DelayMS > 0 {
+					select {
+					case <-p.done:
+						return nil
+					case <-time.After(time.Duration(cfg.DelayMS) * time.Millisecond):
+					}
+				}
+				if cfg.Mode == "deny" {
+					reply = []byte{pdu[0] | 128, 4}
+					updates = nil
+				} else {
+					var err error
+					reply, err = s.e.applyModbusCommand(s.cfg.ID, d.ID, pdu)
+					if err != nil {
+						reply = []byte{pdu[0] | 128, 3}
+					}
+					updates = nil
+				}
+			}
 			s.e.applyDevicePoints(s.cfg.ID, d.ID, updates)
 			if reply == nil || broadcast {
 				continue
@@ -532,25 +572,25 @@ func (p *peer) handleModbus(b []byte) error {
 		return nil
 	}
 	if unit != request.unit {
-		s.e.log(s.cfg.ID, p.address, "ERR", nil, "Modbus 设备地址不匹配")
-		return nil
-	}
-	if len(request.pdu) >= 6 && request.pdu[0] == 16 {
-		if len(pdu) == 5 && bytes.Equal(request.pdu[:5], pdu) {
-			s.e.log(s.cfg.ID, p.address, "SYS", nil, "校时写入确认")
-			return nil
-		}
+		s.e.log(s.cfg.ID, p.address, "ERR", nil, "Modbus 设备点位不匹配")
 		return nil
 	}
 	dForFormat, _ := s.e.Device(s.cfg.ID, request.deviceID)
 	pdu = bitOrderPDU(pdu, dForFormat, false)
-	points, err := DecodeModbusResponse(request.pdu, pdu)
+	points, err := decodeModbusReply(request.pdu, pdu)
+	if request.result != nil {
+		defer func() { request.result <- err }()
+	}
 	if err != nil {
 		s.e.log(s.cfg.ID, p.address, "ERR", nil, err.Error())
 		return nil
 	}
 	d, lookupErr := s.e.Device(s.cfg.ID, request.deviceID)
 	if lookupErr == nil && d.Unit == request.unit {
+		if len(request.pdu) > 5 && request.pdu[0] == 16 && request.purpose == "clock" {
+			s.e.log(s.cfg.ID, p.address, "SYS", nil, "校时写入确认")
+			return nil
+		}
 		clockAddr, _ := parseAddress(value(d, "TimeAddr", "1000H"), 65535)
 		if request.purpose == "clock" && len(request.pdu) == 5 && uint32(binary.BigEndian.Uint16(request.pdu[1:])) == clockAddr && len(pdu) == 10 {
 			stamp, _, decodeErr := decodeCP56(pdu[2:9])
@@ -562,13 +602,15 @@ func (p *peer) handleModbus(b []byte) error {
 		if flag(d, "cb_ReadEvent", false) {
 			eventAddr, _ := parseAddress(value(d, "txtEventAddr", "500H"), 65535)
 			if uint32(binary.BigEndian.Uint16(request.pdu[1:])) == eventAddr {
-				s.e.recordEvents(s.cfg.ID, d.ID, points, 3)
+				s.e.log(s.cfg.ID, p.address, "SYS", nil, "保护事件寄存器已读取；厂商事件格式未解码")
 			}
 		}
-		mapped, err := collapseRegisters(d, points, false)
+		var mapped []Point
+		mapped, err = collapseRegisters(d, points, false)
 		if err != nil {
 			s.e.log(s.cfg.ID, p.address, "ERR", nil, err.Error())
 		} else {
+			p.recordModbusChanges(d, mapped)
 			s.e.applyDevicePoints(s.cfg.ID, d.ID, mapped)
 		}
 	}
@@ -728,30 +770,30 @@ func (p *peer) handleASDU(a []byte, delayed bool) error {
 		if s.cfg.Role == "server" && controlKind(a[0]) != "" {
 			reply := append([]byte{}, a...)
 			reply[2] = 46 | 0x40
-			return p.sendI(reply, "控制公共地址不存在")
+			return p.sendI(reply, "控制公共点位不存在")
 		}
-		s.e.log(s.cfg.ID, p.address, "ERR", nil, "公共地址不匹配，已忽略 ASDU")
+		s.e.log(s.cfg.ID, p.address, "ERR", nil, "公共点位不匹配，已忽略 ASDU")
 		return nil
 	}
-	resolved, lookupErr := s.e.Device(s.cfg.ID, d.ID)
-	if lookupErr != nil {
-		return nil
+	if s.cfg.Role == "server" {
+		resolved, lookupErr := s.e.Device(s.cfg.ID, d.ID)
+		if lookupErr != nil {
+			return nil
+		}
+		d = resolved
 	}
-	d = resolved
-	if s.cfg.Role == "server" && (a[2]&63 == 6 || a[2]&63 == 8) && !delayed {
+	if s.cfg.Role == "server" && (a[2]&63 == 6 || a[2]&63 == 8) {
 		mode := value(d, "responseMode", "normal")
+		delay := number(d, "responseDelayMs", 0)
+		if kind := controlKind(a[0]); kind != "" {
+			cfg := simulationFor(d, controlCategory(kind))
+			mode, delay = cfg.Mode, cfg.DelayMS
+		}
 		if mode == "silent" {
 			return nil
 		}
-		if mode == "deny" {
-			cot := byte(7 | 64)
-			if a[2]&63 == 8 {
-				cot = 9 | 64
-			}
-			return p.sendI(cloneASDU(a, cot), "配置的否认应答")
-		}
-		delay := number(d, "responseDelayMs", 0)
-		if delay > 0 {
+
+		if delay > 0 && !delayed {
 			p.mu.Lock()
 			if len(p.delayed) >= 256 {
 				p.mu.Unlock()
@@ -760,6 +802,13 @@ func (p *peer) handleASDU(a []byte, delayed bool) error {
 			p.delayed = append(p.delayed, delayedASDU{append([]byte{}, a...), time.Now().Add(time.Duration(delay) * time.Millisecond)})
 			p.mu.Unlock()
 			return nil
+		}
+		if mode == "deny" {
+			cot := byte(7 | 64)
+			if a[2]&63 == 8 {
+				cot = 9 | 64
+			}
+			return p.sendI(cloneASDU(a, cot), "配置的否认应答")
 		}
 	}
 	if s.cfg.Role == "client" {
@@ -798,6 +847,20 @@ func (p *peer) handleASDU(a []byte, delayed bool) error {
 				points = append(points, point)
 			}
 		}
+		// A full snapshot has no event ordering to preserve. Group its types
+		// and addresses so an interleaved four-remote table can use bulk ASDUs
+		// instead of filling the send window with one frame per input.
+		rank := map[string]int{"yx": 0, "position": 1, "yc": 2}
+		sort.SliceStable(points, func(i, j int) bool {
+			a, b := points[i], points[j]
+			if a.Kind != b.Kind {
+				return rank[a.Kind] < rank[b.Kind]
+			}
+			if a.WireType != b.WireType {
+				return a.WireType < b.WireType
+			}
+			return a.Address < b.Address
+		})
 		if err := p.publishPoints(d, points, 20); err != nil {
 			return err
 		}
@@ -826,6 +889,12 @@ func (p *peer) tick() {
 			for tid, req := range p.pending {
 				if now.After(req.until) {
 					delete(p.pending, tid)
+					if req.result != nil {
+						req.result <- errors.New("Modbus控制应答超时，结果未知")
+						if p.s.cfg.Protocol == "modbus-rtu" {
+							p.controlUncertain = true
+						}
+					}
 					p.s.e.log(p.s.cfg.ID, p.address, "ERR", nil, fmt.Sprintf("Modbus 请求超时 · TID=%d", tid))
 				}
 			}

@@ -136,7 +136,7 @@ func EncodeControl104(ca uint16, r Control104Request) ([]byte, error) {
 	}
 
 	if ca == 0 || ca == 65535 || r.Address > 0xffffff || controlKind(r.Type) == "" {
-		return nil, errors.New("控制类型或地址无效")
+		return nil, errors.New("控制类型或点位无效")
 	}
 	if math.IsNaN(r.Value) || math.IsInf(r.Value, 0) {
 		return nil, errors.New("控制值必须是有限数值")
@@ -274,6 +274,9 @@ func (e *Engine) command104DeviceContext(ctx context.Context, channelID, deviceI
 func (p *peer) command104(a []byte, r Control104Request) (Control104Result, error) {
 	return p.command104Context(context.Background(), a, r)
 }
+
+var errControlUncertain = errors.New("上次命令结果未确定，请重连后操作")
+
 func (p *peer) command104Context(ctx context.Context, a []byte, r Control104Request) (Control104Result, error) {
 	p.mu.Lock()
 	if err := ctx.Err(); err != nil {
@@ -294,7 +297,7 @@ func (p *peer) command104Context(ctx context.Context, a []byte, r Control104Requ
 	}
 	if p.controlUncertain {
 		p.mu.Unlock()
-		return Control104Result{}, errors.New("上次命令结果未确定，请重连后操作")
+		return Control104Result{}, errControlUncertain
 	}
 	for k, v := range p.clientSelections {
 		if time.Now().After(v.until) {
@@ -305,7 +308,7 @@ func (p *peer) command104Context(ctx context.Context, a []byte, r Control104Requ
 	selected, ok := p.clientSelections[key]
 	if r.Operation == "execute" && !r.Direct && (!ok || time.Now().After(selected.until) || !bytes.Equal(selected.signature, controlSignature(a))) {
 		p.mu.Unlock()
-		return Control104Result{}, errors.New("请先选择相同的类型、地址和值，并等待选择确认")
+		return Control104Result{}, errors.New("请先选择相同的类型、点位和值，并等待选择确认")
 	}
 	delete(p.clientSelections, key)
 	wait := &controlWait{asdu: a, request: r, result: make(chan controlOutcome, 1)}
@@ -396,7 +399,7 @@ func (p *peer) controlReply104(a []byte) error {
 	return nil
 }
 
-func (e *Engine) applyControl104(channelID, deviceID string, r Control104Request, apply bool) error {
+func (e *Engine) applyControl104(channelID, deviceID string, r Control104Request, apply bool) ([]Point, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	for i := range e.project.Channels {
@@ -406,15 +409,15 @@ func (e *Engine) applyControl104(channelID, deviceID string, r Control104Request
 		}
 		d, err := deviceIn(c, deviceID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		for j := range d.Points {
 			point := &d.Points[j]
-			if point.Kind != controlKind(r.Type) || point.Address != r.Address {
+			if (point.Kind != controlKind(r.Type) && !(controlKind(r.Type) == "step" && point.Kind == "yt")) || point.Address != r.Address {
 				continue
 			}
 			if !apply {
-				return nil
+				return nil, nil
 			}
 			value := r.Value
 			if r.Type == 46 || r.Type == 59 {
@@ -428,18 +431,32 @@ func (e *Engine) applyControl104(channelID, deviceID string, r Control104Request
 			}
 			updated := *point
 			updated.Value = value
+			updated.WireType = r.Type
 			if err := validatePoints([]Point{updated}, "iec104"); err != nil {
-				return err
+				return nil, err
+			}
+			mapped, err := mappedControlPoints("iec104", *d, []Point{updated})
+			if err != nil {
+				return nil, err
+			}
+			for _, u := range mapped {
+				for k := range d.Points {
+					if d.Points[k].Kind == u.Kind && d.Points[k].Address == u.Address {
+						d.Points[k] = u
+						break
+					}
+				}
 			}
 			point.Value = value
 			point.Updated = time.Now().Format("15:04:05.000")
 			c.syncLegacy()
 			e.dirty = true
-			return nil
+			e.markPointsLocked(channelID, d.ID, append(mapped, *point))
+			return mapped, nil
 		}
-		return errors.New("未配置对应的控制点")
+		return nil, errors.New("未配置对应的控制点")
 	}
-	return errors.New("装置已被移除")
+	return nil, errors.New("装置已被移除")
 }
 func (p *peer) controlRequest104(d Device, a []byte) error {
 	r, err := decodeControl104(a)
@@ -455,7 +472,7 @@ func (p *peer) controlRequest104(d Device, a []byte) error {
 	if a[2]&0xc0 != 0 || cot != 6 && cot != 8 {
 		return reply(45|0x40, "无效控制传送原因／测试标志")
 	}
-	if err = p.s.e.applyControl104(p.s.cfg.ID, d.ID, r, false); err != nil {
+	if _, err = p.s.e.applyControl104(p.s.cfg.ID, d.ID, r, false); err != nil {
 		return reply(47|0x40, err.Error())
 	}
 	key, signature := controlID(a), controlSignature(a)
@@ -484,11 +501,20 @@ func (p *peer) controlRequest104(d Device, a []byte) error {
 	}
 	delete(p.serverSelections, key)
 	p.mu.Unlock()
-	if err = p.s.e.applyControl104(p.s.cfg.ID, d.ID, r, true); err != nil {
+	mapped, err := p.s.e.applyControl104(p.s.cfg.ID, d.ID, r, true)
+	if err != nil {
 		return reply(7|0x40, err.Error())
 	}
 	if err = reply(7, "执行确认"); err != nil {
 		return err
 	}
-	return reply(10, "执行结束")
+	if err = reply(10, "执行结束"); err != nil {
+		return err
+	}
+	for _, other := range readyDataPeers(p.s) {
+		if err = other.publishPoints(d, mapped, 3); err != nil {
+			return err
+		}
+	}
+	return nil
 }

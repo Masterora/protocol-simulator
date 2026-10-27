@@ -1,21 +1,669 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="icon.svg"><title>protocol-simulator 规约测试工作台</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="compact.css"><link rel="stylesheet" href="interaction.css"><link rel="stylesheet" href="replica.css"><link rel="stylesheet" href="native.css"><link rel="stylesheet" href="modern.css"></head>
-<body>
-<header class="replica-ribbon"><div class="ribbon-title"><button id="new-project" class="quick-button" title="新建工程">新建工程</button><button id="save-as" class="quick-button" title="另存为">另存为</button><div class="mode-switch"><button data-mode="client">主站</button><button data-mode="server">子站</button></div><span id="project-name"></span></div><div class="ribbon-tabs"><span class="selected">工具栏</span></div><div class="ribbon-groups"><div class="ribbon-group"><div class="ribbon-group-buttons"><button id="edit-channel" class="ribbon-button"><svg viewBox="0 0 34 36" aria-hidden="true"><rect x="9" y="3" width="16" height="11"/><path d="M17 14v6M5 20h24M5 20v6M29 20v6"/><rect x="1" y="26" width="9" height="6"/><rect x="24" y="26" width="9" height="6"/></svg><span>通信</span></button><button id="communication-manager" class="ribbon-button"><svg viewBox="0 0 34 36" aria-hidden="true"><rect x="4" y="4" width="26" height="25"/><path d="M4 12h26M13 12v17M4 20h26"/></svg><span>通信管理</span></button><button id="toggle-channel" class="ribbon-button"><svg viewBox="0 0 34 36" aria-hidden="true"><path d="M12 3v9M22 3v9M8 12h18v6a9 9 0 0 1-18 0zM17 27v6"/></svg><span>连接</span></button></div></div><div class="ribbon-group"><div class="ribbon-group-buttons"><button id="open-project" class="ribbon-button"><svg viewBox="0 0 34 36" aria-hidden="true"><path d="M3 8h11l3 4h14l-4 17H3z"/><path d="M3 17h25"/></svg><span>打开</span></button><button id="save-project" class="ribbon-button"><svg viewBox="0 0 34 36" aria-hidden="true"><path d="M5 4h22l3 4v23H5zM11 4v10h13V4M11 31V20h13v11"/></svg><span>保存</span></button></div></div></div></header>
-<div class="workspace original-workspace"><aside class="navigation-dock" aria-label="通道和装置"><section class="channel-dock navigation-section" aria-label="通道"><div class="dock-caption"><span>通道 <b id="channel-count">0</b></span><button id="add-channel" class="dock-add" title="新增通道" aria-label="新增通道">+</button></div><div id="channel-list" class="channel-list"></div></section><div id="navigation-resizer" class="layout-resizer" role="separator" tabindex="0" aria-label="调整通道和装置高度" aria-orientation="horizontal" aria-valuemin="20" aria-valuemax="80" aria-valuenow="50"></div><section class="channel-device-dock navigation-section" aria-label="装置"><div class="dock-caption"><span>装置 <b id="device-count">0</b></span><button id="add-device" class="dock-add" title="新增装置" aria-label="新增装置">+</button></div><div id="device-list"></div></section></aside><div id="sidebar-resizer" class="layout-resizer" role="separator" tabindex="0" aria-label="调整左侧栏宽度" aria-orientation="vertical" aria-valuemin="144" aria-valuemax="420" aria-valuenow="180"></div><main><div id="device-dock" class="device-dock"><div class="dock-caption information-caption"><span id="information-caption">主站装置</span></div><section id="points-panel" class="panel points-panel"><div class="panel-bar"><div class="panel-title"><span class="panel-mark">▦</span><h2>信息体</h2><span id="selected-device-name" class="selected-device-name"></span><span id="point-badge" class="badge">0 点</span></div><div class="toolbar"><select hidden id="point-kind" aria-label="点类型筛选"><option value="">全部类型</option><option value="yx">遥信</option><option value="yc">遥测</option><option value="coil">线圈</option><option value="discrete">离散量</option><option value="holding">保持寄存器</option><option value="input">输入寄存器</option></select><input id="point-search" class="search" placeholder="搜索" aria-label="搜索点表"><button id="import-points">导入</button><button id="export-points">导出</button><button id="add-point">＋ 添加</button></div></div>
-<div id="point-tabs" class="point-tabs" role="tablist" aria-label="点表类型"></div><div id="protocol-actions" class="protocol-actions"></div><div id="point-scroll" class="table-scroll"><table class="point-table"><thead><tr><th>地址</th><th>码值</th><th>值 / 状态</th><th>品质</th><th>描述</th></tr></thead><tbody id="point-rows"></tbody></table><div id="point-empty" class="empty-state">暂无数据</div></div><div id="point-pager" class="point-pager" hidden><button id="point-prev" aria-label="上一页">‹</button><span id="point-page"></span><button id="point-next" aria-label="下一页">›</button></div></section>
-</div><div id="panel-resizer" role="separator" tabindex="0" aria-label="调整信息体和报文宽度" aria-orientation="vertical" aria-valuemin="25" aria-valuemax="75" aria-valuenow="42"></div><div id="report-dock" class="report-dock"><section id="traffic-panel" class="panel traffic-panel"><div class="panel-bar"><div class="panel-title"><span class="panel-mark">⌁</span><h2>报文窗口</h2><span id="message-badge" class="badge">0</span></div><button id="pause-messages" type="button" title="暂停／继续报文显示（Space），不停止通信">暂停</button><div id="message-options" class="toolbar" hidden><input id="message-search" class="search" placeholder="搜索报文" aria-label="搜索报文"><select id="direction-filter" aria-label="报文方向"><option value="">全部方向</option><option>RX</option><option>TX</option><option>ERR</option><option>SYS</option></select><label class="check"><input type="checkbox" id="all-messages">全部通道</label><label class="check"><input type="checkbox" id="follow-messages" checked>跟随</label><button id="export-messages">导出</button><button id="clear-messages">清空</button></div></div><div id="message-scroll" class="message-scroll"><table class="message-table"><thead><tr><th>时间</th><th>方向</th><th>内容</th></tr></thead><tbody id="message-rows"></tbody></table><div id="message-empty" class="message-empty">暂无报文</div></div><form id="raw-form" class="raw-send"><span class="raw-label">HEX</span><input id="raw-hex" placeholder="十六进制报文" autocomplete="off" aria-label="十六进制报文"><label class="check"><input type="checkbox" id="append-crc">CRC16</label><button class="primary" type="submit">发送</button></form></section>
-<div id="debug-resizer" class="layout-resizer" role="separator" tabindex="0" aria-label="调整报文和调试信息高度" aria-orientation="horizontal" aria-valuemin="65" aria-valuemax="600" aria-valuenow="130"></div><section class="debug-dock"><div class="dock-caption">调试信息<button id="clear-debug" title="清除调试信息">清除</button></div><pre id="debug-content"></pre></section></div></main></div><footer class="replica-status"><span id="channel-name"></span><span id="current-protocol"></span><span id="channel-meta"></span><span>TX <b id="tx-count">0 B</b></span><span>RX <b id="rx-count">0 B</b></span><span>连接 <b id="peer-count">0</b></span><span id="footer-detail" role="status"></span><span class="producer-credit">Produced by Der_Orange <span class="producer-orange" aria-label="橙子" role="img">🍊</span></span></footer><button id="device-config" hidden>查看/修改装置配置</button><button id="delete-channel" hidden>移除选中通道</button>
-<dialog id="channel-dialog"><form id="channel-form"><div class="dialog-heading"><div><h2 id="channel-dialog-title">新增通道</h2></div><button type="button" data-close="channel-dialog" class="close-button" aria-label="关闭">×</button></div><input type="hidden" name="id"><div id="network-summary"></div><div id="original-network-panel"></div><div class="form-grid"><label class="wide">通道名称<input name="name" placeholder="名称" required maxlength="100"></label><label>通信协议<select name="protocol"><option value="iec104">IEC 60870-5-104</option><option value="modbus-tcp">Modbus TCP</option><option value="modbus-rtu">Modbus RTU</option><option value="raw">RAW 原始报文</option></select></label><label>站点角色<select name="role"><option value="client">主站 / 客户端</option><option value="server">子站 / 服务端</option></select></label><label>传输方式<select name="transport"><option value="tcp-client">TCP 客户端</option><option value="tcp-server">TCP 服务端</option><option value="udp">UDP</option><option value="serial">串口</option></select></label><label>目标 / 监听地址<input name="address" placeholder="127.0.0.1:2404" required></label><label>本地绑定<input name="localAddress" placeholder="可选"></label><label>超时（毫秒）<input name="timeoutMs" type="number" min="100" max="60000" value="3000" required></label><label>Modbus 设备地址<input name="unit" type="number" min="0" max="255" value="1" required></label><label>104 公共地址<input name="commonAddress" type="number" min="1" max="65535" value="1" required></label></div><div id="serial-fields" class="form-grid serial-fields"><label>波特率<input name="baud" type="number" min="50" max="4000000" value="9600"></label><label>数据位<select name="dataBits"><option>8</option><option>7</option><option>6</option><option>5</option></select></label><label>校验<select name="parity"><option value="N">无 N</option><option value="E">偶 E</option><option value="O">奇 O</option></select></label><label>停止位<select name="stopBits"><option>1</option><option>2</option></select></label><button type="button" id="list-ports">查看可用串口</button><span id="ports-result"></span></div><div id="network-extra"><button type="button" id="network-ports">刷新串口</button><span id="network-port-status"></span></div><p class="form-error" role="alert" hidden></p><div class="dialog-actions"><button type="button" data-close="channel-dialog">取消</button><button class="primary" type="submit">保存</button></div></form></dialog>
-<dialog id="device-dialog" class="original-dialog"><form id="device-form"><div class="dialog-heading"><h2 id="device-dialog-title">主站增加装置</h2><button type="button" data-close="device-dialog" class="close-button" aria-label="关闭">×</button></div><div class="protocol-selector"><div class="original-group-title">规约选择</div><label>规约<select id="device-protocol"><option value="">请选择</option></select></label><label>版本<select id="device-version"></select></label></div><label class="device-name-field">名称<input name="name" required maxlength="100" autocomplete="off"></label><input name="protocol" type="hidden"><input name="unit" type="hidden" value="1"><input name="commonAddress" type="hidden" value="1"><div id="original-device-panel"></div><p class="form-error" role="alert" hidden></p></form></dialog><dialog id="point-dialog"><form id="point-form"><div class="dialog-heading"><div><h2 id="point-dialog-title">添加点</h2></div><button type="button" data-close="point-dialog" class="close-button" aria-label="关闭">×</button></div><input name="index" type="hidden"><div class="form-grid"><label>点类型<select name="kind"></select></label><label>地址（十进制）<input name="address" type="number" min="0" max="16777215" required></label><label class="wide">描述<input name="name" maxlength="200" placeholder="可选"></label><label>数值<input name="value" type="number" step="any" value="0" required></label><label id="point-feedback-label" class="wide" hidden>遥信关联<input name="feedback" placeholder="地址；!地址为反向"></label><label>品质（0–255）<input name="quality" type="number" min="0" max="255" value="0" required></label></div><p class="form-error" role="alert" hidden></p><div class="dialog-actions"><button type="button" data-close="point-dialog">取消</button><button class="primary" type="submit">保存</button></div></form></dialog>
+<html lang="zh-CN"
+  ><head
+    ><meta charset="UTF-8" /><meta
+      name="viewport"
+      content="width=device-width,initial-scale=1" /><link rel="icon" href="icon.svg" /><title
+      >protocol-simulator 规约测试工作台</title
+    ><link rel="stylesheet" href="app.css"
+  /></head>
+  <body>
+    <header class="replica-ribbon"
+      ><div class="ribbon-title"
+        ><button id="new-project" class="quick-button" aria-description="新建">新建</button
+        ><button id="save-as" class="quick-button" aria-description="另存为">另存为</button
+        ><div class="mode-switch"
+          ><button data-mode="client">主站</button><button data-mode="server">子站</button></div
+        ><span id="project-name"></span></div
+      ><div class="ribbon-groups"
+        ><div class="ribbon-group"
+          ><div class="ribbon-group-buttons"
+            ><button id="edit-channel" class="ribbon-button" aria-description="设置当前通道"
+              ><svg viewBox="0 0 34 36" aria-hidden="true">
+                <rect x="9" y="3" width="16" height="11"></rect>
+                <path d="M17 14v6M5 20h24M5 20v6M29 20v6"></path>
+                <rect x="1" y="26" width="9" height="6"></rect>
+                <rect x="24" y="26" width="9" height="6"></rect></svg
+              ><span>通道设置</span></button
+            ><button
+              id="communication-manager"
+              class="ribbon-button"
+              aria-description="查看和管理当前角色的全部通道"
+              ><svg viewBox="0 0 34 36" aria-hidden="true">
+                <rect x="4" y="4" width="26" height="25"></rect>
+                <path d="M4 12h26M13 12v17M4 20h26"></path></svg
+              ><span>通道管理</span></button
+            ><button id="toggle-channel" class="ribbon-button"
+              ><svg viewBox="0 0 34 36" aria-hidden="true">
+                <path d="M12 3v9M22 3v9M8 12h18v6a9 9 0 0 1-18 0zM17 27v6"></path></svg
+              ><span>连接</span></button
+            ></div
+          ></div
+        ><div class="ribbon-group"
+          ><div class="ribbon-group-buttons"
+            ><button id="open-project" class="ribbon-button"
+              ><svg viewBox="0 0 34 36" aria-hidden="true">
+                <path d="M3 8h11l3 4h14l-4 17H3z"></path>
+                <path d="M3 17h25"></path></svg
+              ><span>打开</span></button
+            ><button id="save-project" class="ribbon-button"
+              ><svg viewBox="0 0 34 36" aria-hidden="true">
+                <path d="M5 4h22l3 4v23H5zM11 4v10h13V4M11 31V20h13v11"></path></svg
+              ><span>保存</span></button
+            ><button id="update-button" class="ribbon-button"
+              ><svg viewBox="0 0 34 36" aria-hidden="true">
+                <path
+                  d="M28 14a11 11 0 0 0-19-5L5 13M5 6v7h7M6 22a11 11 0 0 0 19 5l4-4M22 23h7v7"
+                ></path></svg
+              ><span>更新</span></button
+            ></div
+          ></div
+        ></div
+      ></header
+    >
+    <div class="workspace original-workspace"
+      ><aside class="navigation-dock" aria-label="通道和装置"
+        ><section class="channel-dock navigation-section" aria-label="通道"
+          ><div class="dock-caption"
+            ><span>通道 <b id="channel-count">0</b></span
+            ><button
+              id="add-channel"
+              class="dock-add"
+              aria-description="新增通道"
+              aria-label="新增通道"
+              ><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                <path d="M8 2v12M2 8h12"></path></svg></button></div
+          ><div id="channel-list" class="channel-list"></div></section
+        ><div
+          id="navigation-resizer"
+          class="layout-resizer"
+          role="separator"
+          tabindex="0"
+          aria-label="调整通道和装置高度"
+          aria-orientation="horizontal"
+          aria-valuemin="20"
+          aria-valuemax="80"
+          aria-valuenow="50"
+        ></div
+        ><section class="channel-device-dock navigation-section" aria-label="装置"
+          ><div class="dock-caption"
+            ><span>装置 <b id="device-count">0</b></span
+            ><button
+              id="add-device"
+              class="dock-add"
+              aria-description="新增装置"
+              aria-label="新增装置"
+              ><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                <path d="M8 2v12M2 8h12"></path></svg></button></div
+          ><div id="device-list"></div></section></aside
+      ><div
+        id="sidebar-resizer"
+        class="layout-resizer"
+        role="separator"
+        tabindex="0"
+        aria-label="调整左侧栏宽度"
+        aria-orientation="vertical"
+        aria-valuemin="144"
+        aria-valuemax="420"
+        aria-valuenow="180"
+      ></div
+      ><main
+        ><div id="device-dock" class="device-dock"
+          ><section id="points-panel" class="panel points-panel"
+            ><div class="panel-bar"
+              ><div class="panel-title"
+                ><span class="panel-mark">▦</span><h2>信息体</h2
+                ><span id="selected-device-name" class="selected-device-name"></span
+                ><span id="point-badge" class="badge">0</span></div
+              ><div class="toolbar"
+                ><select hidden="" id="point-kind" aria-label="点类型筛选"
+                  ><option value="">全部类型</option
+                  ><option value="yx">遥信</option
+                  ><option value="yc">遥测</option
+                  ><option value="coil">线圈</option
+                  ><option value="discrete">离散量</option
+                  ><option value="holding">保持寄存器</option
+                  ><option value="input">输入寄存器</option></select
+                ><label for="point-search" class="point-search-label">搜索</label
+                ><input
+                  id="point-search"
+                  class="search"
+                  aria-label="搜索点位或描述"
+                  autocomplete="off" /></div
+            ></div>
+            <div id="point-tabs" class="point-tabs" role="tablist" aria-label="点表类型"></div
+            ><div id="protocol-actions" class="protocol-actions"></div
+            ><div id="point-scroll" class="table-scroll"
+              ><table class="point-table"
+                ><thead
+                  ><tr
+                    ><th>点位</th><th>码值</th><th>值 / 状态</th><th>品质</th><th>描述</th></tr
+                  ></thead
+                ><tbody id="point-rows"></tbody></table
+              ><div id="point-empty" class="empty-state">暂无数据</div></div
+            ><div id="point-pager" class="point-pager" hidden=""
+              ><button id="point-prev" aria-label="上一页">‹</button><span id="point-page"></span
+              ><button id="point-next" aria-label="下一页">›</button></div
+            ></section
+          > </div
+        ><div
+          id="panel-resizer"
+          role="separator"
+          tabindex="0"
+          aria-label="调整信息体和报文宽度"
+          aria-orientation="vertical"
+          aria-valuemin="25"
+          aria-valuemax="75"
+          aria-valuenow="42"
+        ></div
+        ><div id="report-dock" class="report-dock"
+          ><section id="traffic-panel" class="panel traffic-panel"
+            ><div class="panel-bar"
+              ><div class="panel-title"
+                ><span class="panel-mark">⌁</span><h2>报文窗口</h2
+                ><span id="message-badge" class="badge">0</span></div
+              ><button
+                id="pause-messages"
+                type="button"
+                aria-description="暂停／继续报文显示（Space），不停止通信"
+                >暂停</button
+              ><button
+                type="button"
+                id="toggle-debug"
+                aria-expanded="false"
+                aria-controls="debug-dock"
+                >调试</button
+              ><div id="message-options" class="toolbar"
+                ><label for="message-search">搜索</label
+                ><input
+                  id="message-search"
+                  class="search"
+                  aria-label="搜索报文"
+                  autocomplete="off"
+                /><select id="direction-filter" aria-label="报文方向"
+                  ><option value="">全部方向</option
+                  ><option>RX</option
+                  ><option>TX</option
+                  ><option>ERR</option
+                  ><option>SYS</option></select
+                ><label class="check"><input type="checkbox" id="all-messages" />全部通道</label
+                ><label class="check"
+                  ><input type="checkbox" id="follow-messages" checked="" />跟随</label
+                ><button id="export-messages">导出</button
+                ><button id="clear-messages">清空</button></div
+              ></div
+            ><div id="message-scroll" class="message-scroll"
+              ><table class="message-table"
+                ><thead
+                  ><tr><th>时间</th><th>方向</th><th>内容</th></tr></thead
+                ><tbody id="message-rows"></tbody></table
+              ><div id="message-empty" class="message-empty">暂无报文</div></div
+            ><form id="raw-form" class="raw-send"
+              ><span class="raw-label">HEX</span
+              ><input
+                id="raw-hex"
+                placeholder="十六进制报文"
+                autocomplete="off"
+                aria-label="十六进制报文"
+              /><label class="check"><input type="checkbox" id="append-crc" />CRC16</label
+              ><button class="primary" type="submit">发送</button></form
+            ></section
+          >
+          <div
+            id="debug-resizer"
+            class="layout-resizer"
+            role="separator"
+            tabindex="0"
+            aria-label="调整报文和调试信息高度"
+            aria-orientation="horizontal"
+            aria-valuemin="65"
+            aria-valuemax="600"
+            aria-valuenow="130"
+            hidden=""
+          ></div
+          ><section class="debug-dock" id="debug-dock" hidden=""
+            ><div class="dock-caption"
+              >调试信息<button id="clear-debug" aria-description="清除调试信息">清除</button></div
+            ><pre id="debug-content"></pre></section></div></main></div
+    ><footer class="replica-status"
+      ><span id="channel-name"></span><span id="current-protocol"></span
+      ><span id="channel-meta"></span
+      ><span id="traffic-stats" hidden=""
+        ><span>TX <b id="tx-count">0 B</b></span
+        ><span>RX <b id="rx-count">0 B</b></span
+        ><span>连接 <b id="peer-count">0</b></span></span
+      ><span id="footer-detail" role="status"></span
+      ><span class="producer-credit"
+        >Produced by Der_Orange
+        <span class="producer-orange" aria-label="橙子" role="img">🍊</span></span
+      ></footer
+    ><button id="device-config" hidden="">查看/修改装置配置</button
+    ><button id="delete-channel" hidden="">移除选中通道</button>
+    <dialog id="channel-dialog"
+      ><form id="channel-form"
+        ><div class="dialog-heading"
+          ><div><h2 id="channel-dialog-title">新增通道</h2></div
+          ><button type="button" data-close="channel-dialog" class="close-button" aria-label="关闭"
+            >×</button
+          ></div
+        ><input type="hidden" name="id" /><div id="network-summary"></div
+        ><div id="original-network-panel"></div
+        ><div class="form-grid"
+          ><label class="wide"
+            >通道名称<input name="name" placeholder="名称" required="" maxlength="100" /></label
+          ><label
+            >通信协议<select name="protocol"
+              ><option value="iec104">IEC 60870-5-104</option
+              ><option value="modbus-tcp">Modbus TCP</option
+              ><option value="modbus-rtu">Modbus RTU</option
+              ><option value="raw">RAW 原始报文</option></select
+            ></label
+          ><label
+            >站点角色<select name="role"
+              ><option value="client">主站 / 客户端</option
+              ><option value="server">子站 / 服务端</option></select
+            ></label
+          ><label
+            >传输方式<select name="transport"
+              ><option value="tcp-client">TCP 客户端</option
+              ><option value="tcp-server">TCP 服务端</option
+              ><option value="udp">UDP</option
+              ><option value="serial">串口</option></select
+            ></label
+          ><label
+            >目标 / 监听端点<input name="address" placeholder="127.0.0.1:2404" required="" /></label
+          ><label>本地绑定<input name="localAddress" placeholder="可选" /></label
+          ><label
+            >超时（毫秒）<input
+              name="timeoutMs"
+              type="number"
+              min="100"
+              max="60000"
+              value="3000"
+              required="" /></label
+          ><label
+            >Modbus 设备点位<input
+              name="unit"
+              type="number"
+              min="0"
+              max="255"
+              value="1"
+              required="" /></label
+          ><label
+            >104 公共点位<input
+              name="commonAddress"
+              type="number"
+              min="1"
+              max="65535"
+              value="1"
+              required="" /></label></div
+        ><div id="serial-fields" class="form-grid serial-fields"
+          ><label
+            >波特率<input name="baud" type="number" min="50" max="4000000" value="9600" /></label
+          ><label
+            >数据位<select name="dataBits"
+              ><option>8</option
+              ><option>7</option
+              ><option>6</option
+              ><option>5</option></select
+            ></label
+          ><label
+            >校验<select name="parity"
+              ><option value="N">无 N</option
+              ><option value="E">偶 E</option
+              ><option value="O">奇 O</option></select
+            ></label
+          ><label
+            >停止位<select name="stopBits"
+              ><option>1</option
+              ><option>2</option></select
+            ></label
+          ><button type="button" id="list-ports">查看可用串口</button
+          ><span id="ports-result"></span></div
+        ><div id="network-extra"
+          ><button type="button" id="network-ports">刷新串口</button
+          ><span id="network-port-status"></span></div
+        ><p class="form-error" role="alert" hidden=""></p
+        ><div class="dialog-actions"
+          ><button type="button" data-close="channel-dialog">取消</button
+          ><button class="primary" type="submit">保存</button></div
+        ></form
+      ></dialog
+    >
+    <dialog id="device-dialog" class="original-dialog"
+      ><form id="device-form"
+        ><div class="dialog-heading"
+          ><h2 id="device-dialog-title">主站增加装置</h2
+          ><button type="button" data-close="device-dialog" class="close-button" aria-label="关闭"
+            >×</button
+          ></div
+        ><div class="protocol-selector"
+          ><label
+            ><span>规约</span
+            ><select id="device-protocol"
+              ><option value="">请选择</option></select
+            ></label
+          ><label
+            ><span>版本</span
+            ><select id="device-version"></select></label></div
+        ><label class="device-name-field"
+          ><span>名称</span
+          ><input name="name" required="" maxlength="100" autocomplete="off" /></label
+        ><input name="protocol" type="hidden" /><input name="unit" type="hidden" value="1" /><input
+          name="commonAddress"
+          type="hidden"
+          value="1" /><div id="original-device-panel"></div
+        ><p class="form-error" role="alert" hidden=""></p></form></dialog
+    ><dialog id="point-dialog"
+      ><form id="point-form"
+        ><div class="dialog-heading"
+          ><div><h2 id="point-dialog-title">添加点</h2></div
+          ><button type="button" data-close="point-dialog" class="close-button" aria-label="关闭"
+            >×</button
+          ></div
+        ><input name="index" type="hidden" /><div class="form-grid"
+          ><label>点类型<select name="kind"></select></label
+          ><label
+            >点位（十进制）<input
+              name="address"
+              type="number"
+              min="0"
+              max="16777215"
+              required="" /></label
+          ><label class="wide">描述<input name="name" maxlength="200" placeholder="可选" /></label
+          ><label>数值<input name="value" type="number" step="any" value="0" required="" /></label
+          ><label id="point-feedback-label" class="wide" hidden=""
+            >遥信关联<input name="feedback" placeholder="点位；!点位为反向" /></label
+          ><label
+            >品质（0–255）<input
+              name="quality"
+              type="number"
+              min="0"
+              max="255"
+              value="0"
+              required="" /></label></div
+        ><p class="form-error" role="alert" hidden=""></p
+        ><div class="dialog-actions"
+          ><button type="button" data-close="point-dialog">取消</button
+          ><button class="primary" type="submit">保存</button></div
+        ></form
+      ></dialog
+    >
 
-<dialog id="auto-yk-dialog"><form id="auto-yk-form" class="auto-window-form"><div id="auto-yk-scroll" class="auto-grid-scroll"><table class="auto-grid"><thead><tr><th>序号</th><th>启用</th><th>点地址</th><th>点名称</th><th>遥控类型</th><th>遥控选择</th><th>遥控执行</th><th>遥控次数</th><th>遥信关联</th><th>变位结果</th></tr></thead><tbody id="auto-yk-rows"></tbody></table></div><section class="auto-error-group"><div class="auto-caption">异常输出窗口</div><pre id="auto-yk-errors">错误输出窗口：</pre></section><section class="auto-options-group"><div class="auto-caption">遥控</div><div class="auto-option-line"><label>遥控间隔(ms)<input id="auto-yk-interval" type="number" min="0" max="3600000" value="2"></label><label>超时判断(ms)<input id="auto-yk-timeout" type="number" min="100" max="60000" value="10000"></label><label class="check"><input id="auto-yk-feedback" type="checkbox">遥信判断</label><label class="check"><input id="auto-yk-double" type="checkbox">双点遥控</label><label class="check"><input id="auto-yk-cycle" type="checkbox">循环遥控</label><label class="check"><input id="auto-yk-direct" type="checkbox">直控</label><label class="check"><input id="auto-yk-autopause" type="checkbox" checked>失败自动暂停</label><button type="button" id="auto-yk-start">自动遥控</button><button type="button" id="auto-yk-stop" disabled>结束遥控</button></div></section><footer class="auto-status"><span id="auto-yk-total">遥控次数：0</span><span id="auto-yk-success">成功次数：0</span><span id="auto-yk-failure">失败次数：0</span></footer><p class="form-error" hidden role="alert"></p></form></dialog>
-<dialog id="auto-yt-dialog"><form id="auto-yt-form" class="auto-window-form"><div class="auto-grid-scroll"><table class="auto-grid"><thead><tr><th>序号</th><th>点地址</th><th>点名称</th><th>遥调数值</th><th>是否已执行</th></tr></thead><tbody id="auto-yt-rows"></tbody></table></div><section class="auto-options-group"><div class="auto-caption">遥调</div><div class="auto-option-line"><label>遥调间隔(ms)<input id="auto-yt-interval" type="number" min="0" max="3600000" value="200"></label><button type="button" id="auto-yt-start">自动遥调</button><button type="button" id="auto-yt-stop" disabled>结束遥调</button></div></section><p class="form-error" hidden role="alert"></p></form></dialog>
-<dialog id="auto-bulk-dialog"><form id="auto-bulk-form"><label class="check"><input id="auto-bulk-enable-check" type="checkbox">批量启用遥控点</label><select id="auto-bulk-enable"><option value="true">全部使能</option><option value="false" selected>全部不使能</option></select><label class="check"><input id="auto-bulk-action-check" type="checkbox">批量修改遥控类型</label><select id="auto-bulk-action"><option>合闸后分闸</option><option>分闸后合闸</option><option>合闸</option><option>分闸</option></select><label class="check"><input id="auto-bulk-count-check" type="checkbox">批量修改遥控次数</label><input id="auto-bulk-count" type="number" min="1" max="1000000" value="1"><button class="primary" type="submit">确认</button><p class="form-error" hidden role="alert"></p></form></dialog><dialog id="control-dialog"><form id="control-form"><div class="dialog-heading"><h2 id="control-title">遥控操作</h2><button type="button" data-close="control-dialog" aria-label="关闭">×</button></div>
-<div class="control-fields"><label>装置<input id="control-device" readonly></label><label>地址<input id="control-address" type="number" min="0" max="16777215" required></label><label>类型<select id="control-type"></select></label><label id="control-state-label">命令<select id="control-state"></select></label><label id="control-value-label">设值<input id="control-value" type="number" step="any" value="0" required></label><label>应答超时（毫秒）<input id="control-timeout" type="number" min="100" max="60000" value="5000" required></label></div>
-<label class="check"><input type="checkbox" id="control-timestamp">带 CP56 时标</label><label class="check control-direct"><input type="checkbox" id="control-direct">直接执行</label><div class="control-actions"><button type="button" id="control-select">选择</button><button type="button" id="control-execute" class="primary">执行</button><button type="button" id="control-cancel">撤销</button></div><p id="control-result" role="status"></p><p class="form-error" role="alert" hidden></p><div class="dialog-actions"><button type="button" data-close="control-dialog">关闭</button></div></form></dialog><dialog id="confirm-dialog"><form id="confirm-form"><h2 id="confirm-title"></h2><p id="confirm-text"></p><input id="confirm-input" maxlength="100" aria-label="工程名称" hidden><div id="confirm-actions" class="dialog-actions"></div></form></dialog><div id="context-menu" class="context-menu" role="menu" hidden></div><dialog id="manager-dialog"><div class="dialog-heading"><h2>网络通道管理</h2><button data-close="manager-dialog" class="close-button">×</button></div><div class="manager-actions"><button id="connect-all">全部连接</button><button id="stop-all">全部停止</button></div><table><thead><tr><th>通道</th><th>通信方式</th><th>地址</th><th>状态</th><th>操作</th></tr></thead><tbody id="manager-rows"></tbody></table></dialog><div id="toast" role="status" aria-live="polite"></div><dialog id="auto-data-dialog"><div class="dialog-heading"><h2>自动数据</h2><button type="button" data-close="auto-data-dialog" class="close-button" aria-label="关闭">×</button></div><form id="auto-data-form">
-<div class="data-top"><span id="auto-data-target"></span><button id="auto-data-add" type="button">添加规则</button></div>
-<div class="data-table-scroll"><table class="data-rule-table"><thead><tr><th>启用</th><th>类型</th><th>起始地址</th><th>结束地址</th><th>周期(ms)</th><th>变化方式</th><th>下限 / 固定值</th><th>上限</th><th>步长</th><th>周期数</th><th></th></tr></thead><tbody id="auto-data-rows"></tbody></table></div>
-<div class="data-options"><label class="check" id="auto-data-disconnect-label"><input id="auto-data-disconnect" type="checkbox" checked>通信中断自动停止</label><span id="auto-data-note"></span></div>
-<p class="form-error" role="alert" hidden></p><div class="data-bottom"><span id="auto-data-status" role="status"></span><span id="auto-data-updates"></span><button id="auto-data-save" type="button">保存配置</button><button id="auto-data-start" type="submit" class="primary">开始</button><button id="auto-data-pause" type="button">暂停</button><button id="auto-data-stop" type="button">停止</button></div>
-</form></dialog><dialog id="events-dialog"><div class="dialog-heading"><h2>事件记录</h2><button data-close="events-dialog">×</button></div><div class="toolbar"><select id="event-category" aria-label="事件类型"><option value="">SOE / COS</option><option>SOE</option><option>COS</option></select><span id="event-count"></span><button id="clear-events">清除当前记录</button></div><div class="event-scroll"><table><thead><tr><th>类别</th><th>事件 / 接收时间</th><th>时间品质</th><th>地址</th><th>类型</th><th>值</th><th>品质</th></tr></thead><tbody id="event-rows"></tbody></table></div></dialog><script src="original-forms.js"></script><script src="replica-ui.js"></script><script type="module" src="app.js"></script></body></html>
+    <dialog id="telemetry-values-dialog"
+      ><div class="dialog-heading"
+        ><h2 id="telemetry-values-title">批量设置</h2
+        ><button type="button" data-close="telemetry-values-dialog" aria-label="关闭"
+          >×</button
+        ></div
+      ><form id="telemetry-values-form"
+        ><div class="form-grid"
+          ><label class="wide"
+            >点位<input id="telemetry-points" type="text" autocomplete="off" required="" /></label
+          ><label
+            >方式<select id="telemetry-mode"
+              ><option value="set">设值</option
+              ><option value="raw16">无符号16位码值</option
+              ><option value="flip">取反</option
+              ><option value="quality">仅改品质</option></select
+            ></label
+          ><label>数值<input id="telemetry-value" type="number" step="any" required="" /></label
+          ><div id="telemetry-quality-field" class="telemetry-quality-field"
+            ><label for="telemetry-quality-enabled" class="quality-caption"
+              ><input id="telemetry-quality-enabled" type="checkbox" /><span>品质</span></label
+            ><input
+              id="telemetry-quality"
+              type="number"
+              min="0"
+              max="255"
+              value="0"
+              aria-label="品质值" /></div></div
+        ><p class="form-error" role="alert" hidden=""></p
+        ><div class="dialog-actions"
+          ><button type="button" data-close="telemetry-values-dialog">取消</button
+          ><button type="submit" class="primary">应用</button></div
+        ></form
+      ></dialog
+    >
+    <dialog id="remote-config-dialog"
+      ><div class="dialog-heading"
+        ><h2 id="remote-config-title">遥控配置</h2
+        ><button type="button" data-close="remote-config-dialog" aria-label="关闭">×</button></div
+      ><form id="remote-config-form"
+        ><div class="remote-options"
+          ><button type="button" id="remote-mapping-add">添加绑定</button></div
+        ><div class="remote-table-scroll"
+          ><details class="advanced-fields"
+            ><summary>高级应答</summary
+            ><div class="advanced-grid"
+              ><label
+                >应答策略<select id="remote-response"
+                  ><option value="normal">正常应答</option
+                  ><option value="deny">否认</option
+                  ><option value="silent">不应答</option></select
+                ></label
+              ><label
+                >应答延迟(ms)<input
+                  id="remote-delay"
+                  type="number"
+                  min="0"
+                  max="60000"
+                  value="0" /></label></div></details
+          ><table class="remote-mapping-table"
+            ><thead
+              ><tr
+                ><th>下发点位</th><th id="remote-target-caption">关联遥信</th
+                ><th id="remote-invert-caption">反向</th><th></th></tr></thead
+            ><tbody id="remote-mappings"></tbody></table></div
+        ><p class="form-error" role="alert" hidden=""></p
+        ><div class="dialog-actions"
+          ><button type="button" data-close="remote-config-dialog">取消</button
+          ><button type="submit" class="primary">保存</button></div
+        ></form
+      ></dialog
+    >
+    <dialog id="auto-yk-dialog"
+      ><form id="auto-yk-form" class="auto-window-form"
+        ><div id="auto-yk-scroll" class="auto-grid-scroll"
+          ><table class="auto-grid"
+            ><thead
+              ><tr
+                ><th>序号</th><th>启用</th><th>点位</th><th>点名称</th><th>遥控类型</th
+                ><th>遥控次数</th><th>遥信关联</th></tr
+              ></thead
+            ><tbody id="auto-yk-rows"></tbody></table></div
+        ><section class="auto-options-group"
+          ><div class="auto-caption">遥控</div
+          ><div class="auto-option-line"
+            ><label
+              >遥控间隔(ms)<input
+                id="auto-yk-interval"
+                type="number"
+                min="0"
+                max="3600000"
+                value="2" /></label
+            ><label
+              >超时判断(ms)<input
+                id="auto-yk-timeout"
+                type="number"
+                min="100"
+                max="60000"
+                value="10000" /></label
+            ><label class="check"><input id="auto-yk-feedback" type="checkbox" />遥信判断</label
+            ><label class="check"><input id="auto-yk-double" type="checkbox" />双点遥控</label
+            ><label class="check"><input id="auto-yk-cycle" type="checkbox" />循环遥控</label
+            ><label class="check"><input id="auto-yk-direct" type="checkbox" />直控</label
+            ><label class="check"
+              ><input id="auto-yk-autopause" type="checkbox" checked="" />失败自动暂停</label
+            ><button type="submit" id="auto-yk-save" class="primary">保存</button></div
+          ></section
+        ><p class="form-error" hidden="" role="alert"></p></form
+    ></dialog>
+    <dialog id="auto-yt-dialog"
+      ><form id="auto-yt-form" class="auto-window-form"
+        ><div class="auto-yt-config"
+          ><label
+            >点位<input
+              id="auto-yt-addresses"
+              aria-label="自动遥调点位"
+              autocomplete="off" /></label
+          ><label id="auto-yt-type-label"
+            >类型<select id="auto-yt-type" aria-label="遥调类型"
+              ><option value="48">归一化</option
+              ><option value="49">标度化</option
+              ><option value="50">浮点数</option></select
+            ></label
+          ><label
+            >批量值<input id="auto-yt-value" aria-label="批量遥调值" autocomplete="off" /></label
+          ><button type="button" id="auto-yt-fill">填入</button></div
+        ><div class="auto-grid-scroll"
+          ><table class="auto-grid"
+            ><thead
+              ><tr><th>序号</th><th>点位</th><th>点名称</th><th>遥调数值</th></tr></thead
+            ><tbody id="auto-yt-rows"></tbody></table></div
+        ><section class="auto-options-group"
+          ><div class="auto-caption">遥调</div
+          ><div class="auto-option-line"
+            ><label
+              >遥调间隔(ms)<input
+                id="auto-yt-interval"
+                type="number"
+                min="0"
+                max="3600000"
+                value="200" /></label
+            ><button type="submit" id="auto-yt-save" class="primary">保存</button></div
+          ></section
+        ><p class="form-error" hidden="" role="alert"></p></form
+    ></dialog>
+    <dialog id="auto-bulk-dialog"
+      ><form id="auto-bulk-form"
+        ><label class="check"
+          ><input id="auto-bulk-enable-check" type="checkbox" />批量启用遥控点</label
+        ><select id="auto-bulk-enable"
+          ><option value="true">全部使能</option
+          ><option value="false" selected="">全部不使能</option></select
+        ><label class="check"
+          ><input id="auto-bulk-action-check" type="checkbox" />批量修改遥控类型</label
+        ><select id="auto-bulk-action"
+          ><option>合闸后分闸</option
+          ><option>分闸后合闸</option
+          ><option>合闸</option
+          ><option>分闸</option></select
+        ><label class="check"
+          ><input id="auto-bulk-count-check" type="checkbox" />批量修改遥控次数</label
+        ><input id="auto-bulk-count" type="number" min="1" max="1000000" value="1" /><button
+          class="primary"
+          type="submit"
+          >确认</button
+        ><p class="form-error" hidden="" role="alert"></p></form></dialog
+    ><dialog id="control-dialog"
+      ><form id="control-form"
+        ><div class="dialog-heading"
+          ><h2 id="control-title">遥控操作</h2
+          ><button type="button" data-close="control-dialog" aria-label="关闭">×</button></div
+        >
+        <div class="control-fields"
+          ><label>装置<input id="control-device" readonly="" /></label
+          ><label
+            >点位<input id="control-address" type="text" autocomplete="off" required="" /></label
+          ><label>类型<select id="control-type"></select></label
+          ><label id="control-state-label">命令<select id="control-state"></select></label
+          ><label id="control-value-label"
+            >设值<input id="control-value" type="number" step="any" value="0" required="" /></label
+        ></div>
+        <label class="check control-direct"
+          ><input type="checkbox" id="control-direct" />直接执行</label
+        ><details class="advanced-fields"
+          ><summary>高级</summary
+          ><div class="advanced-grid"
+            ><label
+              >应答超时（毫秒）<input
+                id="control-timeout"
+                type="number"
+                min="100"
+                max="60000"
+                value="5000"
+                required="" /></label
+            ><label class="check"
+              ><input type="checkbox" id="control-timestamp" />带 CP56 时标</label
+            ></div
+          ></details
+        ><div class="control-actions"
+          ><button type="button" id="control-select">选择</button
+          ><button type="button" id="control-execute" class="primary">执行</button
+          ><button type="button" id="control-cancel">撤销</button></div
+        ><p id="control-result" role="status"></p><p class="form-error" role="alert" hidden=""></p
+        ><div class="dialog-actions"
+          ><button type="button" data-close="control-dialog">关闭</button></div
+        ></form
+      ></dialog
+    ><dialog id="confirm-dialog"
+      ><form id="confirm-form"
+        ><h2 id="confirm-title"></h2><p id="confirm-text"></p
+        ><input id="confirm-input" maxlength="100" aria-label="工程名称" hidden="" /><div
+          id="confirm-actions"
+          class="dialog-actions"
+        ></div></form></dialog
+    ><div id="context-menu" class="context-menu" role="menu" hidden=""></div
+    ><dialog id="manager-dialog"
+      ><div class="dialog-heading"
+        ><h2>网络通道管理</h2
+        ><button data-close="manager-dialog" class="close-button">×</button></div
+      ><div class="manager-actions"
+        ><button id="toggle-all-channels" type="button">全部连接</button></div
+      ><table
+        ><thead
+          ><tr><th>通道</th><th>通信方式</th><th>端点</th><th>状态</th><th>操作</th></tr></thead
+        ><tbody id="manager-rows"></tbody></table></dialog
+    ><div id="toast" role="status" aria-live="polite"></div
+    ><dialog id="auto-data-dialog"
+      ><div class="dialog-heading"
+        ><h2>自动数据</h2
+        ><button type="button" data-close="auto-data-dialog" class="close-button" aria-label="关闭"
+          >×</button
+        ></div
+      ><form id="auto-data-form">
+        <div class="data-top"
+          ><span id="auto-data-target"></span
+          ><button id="auto-data-add" type="button">添加规则</button></div
+        >
+        <div class="data-table-scroll"
+          ><table class="data-rule-table"
+            ><thead
+              ><tr
+                ><th>启用</th><th>类型</th><th>点位</th><th>周期(ms)</th
+                ><th id="data-mode-caption">变化方式</th><th>下限</th><th>上限</th><th>步长</th
+                ><th></th></tr></thead
+            ><tbody id="auto-data-rows"></tbody></table
+        ></div>
+        <div class="data-options"
+          ><label class="check" id="auto-data-disconnect-label"
+            ><input id="auto-data-disconnect" type="checkbox" checked="" />通信中断自动停止</label
+          ><span id="auto-data-note"></span
+        ></div>
+        <p class="form-error" role="alert" hidden=""></p
+        ><div class="data-bottom"
+          ><button type="button" data-close="auto-data-dialog">取消</button
+          ><button id="auto-data-save" type="submit" class="primary">保存</button></div
+        >
+      </form></dialog
+    ><dialog id="events-dialog"
+      ><div class="dialog-heading"
+        ><h2>事件记录</h2><button data-close="events-dialog">×</button></div
+      ><div class="toolbar"
+        ><select id="event-category" aria-label="事件类型"
+          ><option value="">SOE / COS</option
+          ><option>SOE</option
+          ><option>COS</option></select
+        ><span id="event-count"></span><button id="clear-events">清除当前记录</button></div
+      ><div class="event-scroll"
+        ><table
+          ><thead
+            ><tr
+              ><th>类别</th><th>事件 / 接收时间</th><th>时间品质</th><th>点位</th><th>类型</th
+              ><th>值</th><th>品质</th></tr
+            ></thead
+          ><tbody id="event-rows"></tbody></table></div></dialog
+    ><script src="forms.js"></script
+    ><script type="module" src="app.js"></script> </body
+></html>

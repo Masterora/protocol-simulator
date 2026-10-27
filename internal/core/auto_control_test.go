@@ -1,8 +1,10 @@
 package core
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"reflect"
 	"strings"
@@ -236,7 +238,11 @@ func TestAutoYKFeedbackChecksRealReportsAndInverseLink(t *testing.T) {
 	}
 }
 func TestAutoYKFeedbackFailureIsNotExecutionSuccess(t *testing.T) {
-	e, c, _ := autoFixture(t, []Point{{Kind: "yk", Address: 100, Feedback: "1"}, {Kind: "yx", Address: 1, Name: "position", Value: 0}})
+	e, c, server := autoFixture(t, []Point{{Kind: "yk", Address: 100, Feedback: "1"}, {Kind: "yx", Address: 1, Name: "position", Value: 0}})
+	// Leave the feedback mapping on the main station only, so no YX is reported.
+	if err := e.SetDevicePoints(server.ID, server.Devices[0].ID, []Point{{Kind: "yk", Address: 100}, {Kind: "yx", Address: 1, Name: "position"}}); err != nil {
+		t.Fatal(err)
+	}
 	v := prepareYK(t, e, c)
 	o := v.Options
 	o.CheckFeedback = true
@@ -252,6 +258,10 @@ func TestAutoYKFeedbackFailureIsNotExecutionSuccess(t *testing.T) {
 	}
 }
 func TestAutoYTOriginalAddressOrderingAndValues(t *testing.T) {
+	mixed, mixedErr := ParseAutoAddresses("1，3 - 5，8")
+	if mixedErr != nil || !reflect.DeepEqual(mixed, []uint32{1, 8, 3, 4, 5}) {
+		t.Fatalf("mixed selection changed original expansion order: %v %v", mixed, mixedErr)
+	}
 	addresses, err := ParseAutoAddresses("5,1-2,9-10,5")
 	if err != nil || !reflect.DeepEqual(addresses, []uint32{5, 5, 1, 2, 9, 10}) {
 		t.Fatalf("source order mismatch: %v %v", addresses, err)
@@ -469,5 +479,91 @@ func TestAutoYTTypeInheritsLiveSourceAndStaleEditsAreRejected(t *testing.T) {
 	value := "99"
 	if _, err = e.UpdateAutoRows(c.ID, c.Devices[0].ID, "yt", []AutoControlRowEdit{{Index: 0, Generation: oldGeneration, Value: &value}}); err == nil {
 		t.Fatal("late editor request overwrote a new operation list")
+	}
+}
+
+// A receiver with one outstanding I-frame must not turn each generated point
+// into a queued frame. Decode everything after acknowledgement resumes to check
+// that batching preserves every cycle, quality and event timestamp.
+func TestAutomaticVariationBatchesSlowReceiverWithoutLosingValues(t *testing.T) {
+	for _, sq := range []string{"非顺序SQ0", "顺序SQ1"} {
+		t.Run(sq, func(t *testing.T) {
+			stamp := "2026-10-26T12:00:00+08:00"
+			points := make([]Point, 0, 500)
+			for i := 0; i < 250; i++ {
+				points = append(points, Point{Kind: "yx", Address: uint32(i + 3), WireType: 30, Quality: 16, Timestamp: stamp})
+			}
+			for i := 0; i < 250; i++ {
+				points = append(points, Point{Kind: "yc", Address: uint32(i + 17016), WireType: 13, Value: 1000.125, Quality: 64})
+			}
+			c := probeChannel(points)
+			c.Devices[0].Configuration = &DeviceConfiguration{Values: map[string]string{"sendWindow": "1", "cbVSQ": sq}}
+			e := NewEngine()
+			e.project = Project{Version: 2, Name: "batch", Channels: []Channel{c}}
+			s := newSession(e, c)
+			e.running[c.ID] = s
+			sink := &controlSink{}
+			p := &peer{s: s, conn: sink, transfer: true, done: make(chan struct{})}
+			s.peers[p] = true
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			pending, cancelPending := context.WithCancel(ctx)
+			defer cancelPending()
+			rules := []AutoDataRule{{Enabled: true, Kind: "yx", Points: "3-252", Mode: "toggle", Max: 1, IntervalMS: 200}, {Enabled: true, Kind: "yc", Points: "17016-17265", Mode: "increment", Min: 0, Max: 9999, Step: .25, IntervalMS: 200}}
+			j := &autoDataJob{view: AutoDataSnapshot{Channel: c.ID, Device: c.Devices[0].ID, Status: "running", Config: AutoDataConfig{Rules: rules}, Cycles: make([]uint64, 2)}, ctx: ctx, cancel: cancel, pending: pending, cancelPending: cancelPending, next: make([]time.Time, 2)}
+			now := time.Now()
+			for cycle := 0; cycle < 40; cycle++ {
+				e.stepAutoData(j, now.Add(time.Duration(cycle)*time.Second))
+				if j.view.Status != "running" || j.view.LastError != "" {
+					t.Fatalf("cycle %d: %+v", cycle, j.view)
+				}
+			}
+			if len(p.queue) > 1400 || j.view.Updates != 20000 {
+				t.Fatalf("queue=%d updates=%d", len(p.queue), j.view.Updates)
+			}
+			for len(p.unacked) > 0 {
+				p.mu.Lock()
+				err := p.ackLocked(p.tx)
+				p.mu.Unlock()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			decodedCount, frames := 0, 0
+			for {
+				b, err := Read104(sink)
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				frames++
+				if b[8] != 3 {
+					t.Fatalf("cause changed: %x", b)
+				}
+				decoded, err := Decode104Points(b[6:], 1)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, point := range decoded {
+					cycle := decodedCount / 500
+					offset := decodedCount % 500
+					if offset < 250 {
+						if point.Kind != "yx" || point.Address != uint32(3+offset) || point.Value != float64((cycle+1)%2) || point.Quality != 16 || point.Timestamp == "" {
+							t.Fatal("signal metadata/value changed", cycle, offset, point)
+						}
+					} else {
+						if point.Kind != "yc" || point.Address != uint32(17016+offset-250) || point.Value != 1000.125+float64(cycle+1)*.25 || point.Quality != 64 {
+							t.Fatal("measurement changed", cycle, offset, point)
+						}
+					}
+					decodedCount++
+				}
+			}
+			if decodedCount != 20000 || frames != 1360 {
+				t.Fatal(fmt.Sprintf("received=%d frames=%d", decodedCount, frames))
+			}
+		})
 	}
 }

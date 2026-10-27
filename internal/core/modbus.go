@@ -95,7 +95,7 @@ func ReadPDU(function byte, start, count uint16) ([]byte, error) {
 		max = 2000
 	}
 	if function < 1 || function > 4 || count == 0 || count > max || uint32(start)+uint32(count) > 65536 {
-		return nil, errors.New("读功能码、起始地址或数量无效")
+		return nil, errors.New("读功能码、起始点位或数量无效")
 	}
 	b := []byte{function, 0, 0, 0, 0}
 	binary.BigEndian.PutUint16(b[1:], start)
