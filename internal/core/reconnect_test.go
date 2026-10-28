@@ -48,6 +48,14 @@ func TestTCPClientWaitsReconnectsAndStops(t *testing.T) {
 	waitConnected(t, e, id)
 	first.Close()
 	eventually(t, func() bool { return e.Snapshot().States[0].Status == "connecting" })
+	eventually(t, func() bool {
+		for _, m := range e.Snapshot().Messages {
+			if m.Peer == address && m.Summary == "对端连接已断开；等待自动重连" {
+				return true
+			}
+		}
+		return false
+	})
 	second, err := listener.Accept()
 	if err != nil {
 		t.Fatal(err)

@@ -1,0 +1,34 @@
+[Unit]
+Description=Protocol Simulator (%i)
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=exec
+User=protocol-simulator
+Group=protocol-simulator
+Environment=CHANNELS=all
+Environment=START_DATA_RULES=false
+Environment=WATCH=true
+Environment=PRS_RUNTIME_DIR=/run/protocol-simulator
+RuntimeDirectory=protocol-simulator
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+EnvironmentFile=-/etc/protocol-simulator/%i.env
+ExecStart=/opt/protocol-simulator/bin/prs run /etc/protocol-simulator/%i.json --channels ${CHANNELS} --start-data-rules=${START_DATA_RULES} --log-format json --watch=${WATCH}
+Restart=on-failure
+RestartPreventExitStatus=2
+RestartSec=3
+TimeoutStopSec=15
+KillSignal=SIGTERM
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

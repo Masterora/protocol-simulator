@@ -57,3 +57,39 @@ jobs:
         shell: pwsh
         run: |
           ./tests/windows_installer_smoke.ps1 -Setup work/protocol-simulator-Setup.exe -Application build/bin/protocol-simulator.exe
+
+  linux-server:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 scripts/build_linux_server.py
+      - run: python3 scripts/verify_serial_posix.py
+      - name: Verify Linux CLI and real systemd instance
+        run: |
+          mkdir -p work/server-native
+          tar -xzf outputs/protocol-simulator-server-linux-amd64.tar.gz -C work/server-native
+          sudo python3 scripts/verify_linux_server.py --binary work/server-native/protocol-simulator-server/bin/prs --output verification/linux-server-runtime --systemd
+          python3 scripts/verify_tui_posix.py --binary work/server-native/protocol-simulator-server/bin/prs --output verification/tui-runtime
+
+  linux-desktop:
+    needs: linux-server
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev dpkg-dev librsvg2-common hicolor-icon-theme xvfb dbus-x11 xdotool x11-utils fonts-noto-cjk
+      - run: python3 scripts/build_linux_desktop.py
+      - run: go test -c -tags desktop,production,webkit2_41 -o /tmp/protocol-native.test .
+      - name: Verify Linux desktop windows, native Save and uninstall
+        run: sudo python3 scripts/verify_linux_desktop.py --package outputs/protocol-simulator-desktop-linux-amd64.deb --smoke-binary /tmp/protocol-native.test --output verification/linux-desktop-runtime --user "$USER"

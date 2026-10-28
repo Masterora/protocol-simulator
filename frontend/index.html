@@ -10,7 +10,13 @@
   <body>
     <header class="replica-ribbon"
       ><div class="ribbon-title"
-        ><button id="new-project" class="quick-button" aria-description="新建">新建</button
+        ><button
+          id="new-project"
+          class="quick-button"
+          aria-label="新建工程"
+          aria-description="新建工程"
+          title="新建工程"
+          >新建</button
         ><button id="save-as" class="quick-button" aria-description="另存为">另存为</button
         ><div class="mode-switch"
           ><button data-mode="client">主站</button><button data-mode="server">子站</button></div
@@ -68,9 +74,10 @@
             ><span>通道 <b id="channel-count">0</b></span
             ><button
               id="add-channel"
-              class="dock-add"
+              class="dock-add creation-button"
               aria-description="新增通道"
               aria-label="新增通道"
+              title="新增通道"
               ><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
                 <path d="M8 2v12M2 8h12"></path></svg></button></div
           ><div id="channel-list" class="channel-list"></div></section
@@ -90,9 +97,10 @@
             ><span>装置 <b id="device-count">0</b></span
             ><button
               id="add-device"
-              class="dock-add"
+              class="dock-add creation-button"
               aria-description="新增装置"
               aria-label="新增装置"
+              title="新增装置"
               ><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
                 <path d="M8 2v12M2 8h12"></path></svg></button></div
           ><div id="device-list"></div></section></aside
@@ -431,7 +439,14 @@
         ><button type="button" data-close="remote-config-dialog" aria-label="关闭">×</button></div
       ><form id="remote-config-form"
         ><div class="remote-options"
-          ><button type="button" id="remote-mapping-add">添加绑定</button></div
+          ><button
+            type="button"
+            id="remote-mapping-add"
+            class="creation-button"
+            aria-label="添加绑定"
+            title="添加绑定"
+            ><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M8 2v12M2 8h12"></path></svg></button></div
         ><div class="remote-table-scroll"
           ><details class="advanced-fields"
             ><summary>高级应答</summary
@@ -625,7 +640,12 @@
       ><form id="auto-data-form">
         <div class="data-top"
           ><span id="auto-data-target"></span
-          ><button id="auto-data-add" type="button" aria-label="添加规则" title="添加规则"
+          ><button
+            id="auto-data-add"
+            class="creation-button"
+            type="button"
+            aria-label="添加规则"
+            title="添加规则"
             ><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path d="M8 2v12M2 8h12"></path></svg></button
         ></div>

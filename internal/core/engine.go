@@ -33,6 +33,7 @@ type Engine struct {
 	running        map[string]*session
 	states         map[string]ChannelState
 	messages       []Message
+	subscribers    map[*MessageSubscription]struct{}
 	sequence       uint64
 	path           string
 	dirty          bool
@@ -98,7 +99,18 @@ func (e *Engine) log(id, peer, direction string, data []byte, summary string) {
 }
 func (e *Engine) logLocked(id, peer, direction string, data []byte, summary string) {
 	e.sequence++
-	e.messages = append(e.messages, Message{Sequence: e.sequence, Time: time.Now().Format("15:04:05.000"), ChannelID: id, Peer: peer, Direction: direction, Hex: strings.ToUpper(hex.EncodeToString(data)), Summary: summary})
+	message := Message{Sequence: e.sequence, Time: time.Now().Format("15:04:05.000"), ChannelID: id, Peer: peer, Direction: direction, Hex: strings.ToUpper(hex.EncodeToString(data)), Summary: summary}
+	e.messages = append(e.messages, message)
+	for subscriber := range e.subscribers {
+		if !subscriber.frames && (direction == "RX" || direction == "TX") {
+			continue
+		}
+		select {
+		case subscriber.messages <- message:
+		default:
+			subscriber.dropped.Add(1)
+		}
+	}
 	if len(e.messages) > 2000 {
 		copy(e.messages, e.messages[len(e.messages)-1500:])
 		e.messages = e.messages[:1500]
@@ -224,18 +236,19 @@ func (e *Engine) ReplaceProject(p Project, path string) error {
 // retaining a second raw byte buffer and string beside the decoded point tables.
 const maxProjectFileBytes int64 = 512 << 20
 
-func (e *Engine) Load(path string) error {
+// ReadProject parses and validates without changing a running engine.
+func ReadProject(path string) (Project, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return err
+		return Project{}, err
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return err
+		return Project{}, err
 	}
 	if info.Size() > maxProjectFileBytes {
-		return fmt.Errorf("工程文件超过 %dMB", maxProjectFileBytes>>20)
+		return Project{}, fmt.Errorf("工程文件超过 %dMB", maxProjectFileBytes>>20)
 	}
 	reader := &io.LimitedReader{R: f, N: maxProjectFileBytes + 1}
 	decoder := json.NewDecoder(reader)
@@ -243,17 +256,27 @@ func (e *Engine) Load(path string) error {
 	var p Project
 	if err = decoder.Decode(&p); err != nil {
 		if reader.N == 0 {
-			return fmt.Errorf("工程文件超过 %dMB", maxProjectFileBytes>>20)
+			return Project{}, fmt.Errorf("工程文件超过 %dMB", maxProjectFileBytes>>20)
 		}
-		return fmt.Errorf("工程解析失败：%w", err)
+		return Project{}, fmt.Errorf("工程解析失败：%w", err)
 	}
 	var trailing any
 	err = decoder.Decode(&trailing)
 	if reader.N == 0 {
-		return fmt.Errorf("工程文件超过 %dMB", maxProjectFileBytes>>20)
+		return Project{}, fmt.Errorf("工程文件超过 %dMB", maxProjectFileBytes>>20)
 	}
 	if err != io.EOF {
-		return errors.New("工程文件包含多余内容")
+		return Project{}, errors.New("工程文件包含多余内容")
+	}
+	if err := validateProject(&p); err != nil {
+		return Project{}, err
+	}
+	return p, nil
+}
+func (e *Engine) Load(path string) error {
+	p, err := ReadProject(path)
+	if err != nil {
+		return err
 	}
 	return e.ReplaceProject(p, path)
 }

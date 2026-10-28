@@ -1,0 +1,58 @@
+{
+  "version": 2,
+  "name": "Modbus服务器示例",
+  "channels": [
+    {
+      "id": "modbus-server",
+      "name": "Modbus子站",
+      "protocol": "modbus-tcp",
+      "role": "server",
+      "transport": "tcp-server",
+      "address": "127.0.0.1:15020",
+      "timeoutMs": 3000,
+      "devices": [
+        {
+          "id": "device-1",
+          "name": "装置1",
+          "unit": 1,
+          "commonAddress": 1,
+          "points": [
+            {
+              "address": 0,
+              "kind": "holding",
+              "dataType": "uint16",
+              "byteOrder": "AB",
+              "name": "测试电压",
+              "value": 220,
+              "quality": 0
+            },
+            {
+              "address": 0,
+              "kind": "coil",
+              "name": "开关",
+              "value": 1,
+              "quality": 0
+            }
+          ],
+          "dataTests": {
+            "telemetry": {
+              "stopOnDisconnect": false,
+              "rules": [
+                {
+                  "enabled": true,
+                  "kind": "holding",
+                  "points": "0",
+                  "intervalMs": 1000,
+                  "mode": "increment",
+                  "min": 220,
+                  "max": 230,
+                  "step": 1
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

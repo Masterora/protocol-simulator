@@ -333,6 +333,7 @@ func (p *peer) readLoop() {
 		s.mu.Lock()
 		delete(s.peers, p)
 		n := len(s.peers)
+		closed := s.closed
 		s.mu.Unlock()
 		s.e.state(s, func(v *ChannelState) {
 			v.Peers = n
@@ -346,7 +347,18 @@ func (p *peer) readLoop() {
 				}
 			}
 		})
-		s.e.log(s.cfg.ID, p.address, "SYS", nil, "连接已断开")
+		summary := "对端连接已断开"
+		switch {
+		case closed:
+			summary = "对端连接已关闭（通道停止）"
+		case n > 0:
+			summary += fmt.Sprintf("；通道仍有 %d 个连接", n)
+		case s.cfg.Transport == "tcp-server":
+			summary += "；通道继续监听"
+		case s.cfg.Transport == "tcp-client":
+			summary += "；等待自动重连"
+		}
+		s.e.log(s.cfg.ID, p.address, "SYS", nil, summary)
 		if p.readDone != nil {
 			close(p.readDone)
 		}

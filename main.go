@@ -108,8 +108,11 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+	if app.remote != nil {
+		width, height = platformWindowSize(app.remote.kind, width, height)
+	}
 	isBulk := app.remote != nil && app.remote.kind == "auto-bulk-dialog"
-	err = wails.Run(&options.App{AlwaysOnTop: isBulk, DisableResize: isBulk, Title: title, Width: width, Height: height, MinWidth: minWidth, MinHeight: minHeight, BackgroundColour: &options.RGBA{R: 23, G: 26, B: 32, A: 255}, Windows: &windows.Options{Theme: windows.Dark}, Mac: &mac.Options{TitleBar: mac.TitleBarDefault(), Appearance: mac.NSAppearanceNameDarkAqua, DisableEscapeExitsFullscreen: true}, AssetServer: &assetserver.Options{Assets: web}, OnStartup: app.startup, OnDomReady: app.domReady, OnShutdown: app.shutdown, OnBeforeClose: app.beforeClose, Bind: []interface{}{app}})
+	err = wails.Run(&options.App{AlwaysOnTop: isBulk, DisableResize: isBulk, Title: title, Width: width, Height: height, MinWidth: minWidth, MinHeight: minHeight, BackgroundColour: &options.RGBA{R: 23, G: 26, B: 32, A: 255}, Linux: platformLinuxOptions(), Windows: &windows.Options{Theme: windows.Dark}, Mac: &mac.Options{TitleBar: mac.TitleBarDefault(), Appearance: mac.NSAppearanceNameDarkAqua, DisableEscapeExitsFullscreen: true}, AssetServer: &assetserver.Options{Assets: web}, OnStartup: app.startup, OnDomReady: app.domReady, OnShutdown: app.shutdown, OnBeforeClose: app.beforeClose, Bind: []interface{}{app}})
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -89,6 +89,9 @@ func TestFourRemote104IndependentResponsesMappingsAndOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, func() bool { return pointAt(t, e, c, "yx", 1).Value == 1 })
+	// The receiver can process a frame before the sending goroutine records its
+	// successful write. Wait for that log boundary before checking wire order.
+	eventually(t, func() bool { return len(serverASDUs(e, s.ID)) >= 3 })
 	frames := serverASDUs(e, s.ID)
 	if len(frames) != 3 || frames[0][0] != 45 || frames[0][2] != 7 || frames[1][2] != 10 || frames[2][0] != 1 || frames[2][2] != 3 {
 		t.Fatalf("wrong confirmation/termination/report order: %x", frames)

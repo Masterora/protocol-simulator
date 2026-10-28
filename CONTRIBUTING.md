@@ -43,7 +43,7 @@ python scripts/package_protocol.py
 
 构建脚本执行协议、界面、打包及原生窗口检查，记录源码、二进制和日志身份。macOS 还检查串口 PTY、竞态和 Windows 交叉构建；Windows 使用 `build/windows/resources.ps1` 调用与 macOS 交叉构建共用的资源工具。版本号仅在 `wails.json` 的 `info.productVersion` 中维护，应用元数据、Windows 数字/字符串版本、清单和 Setup 均由此生成。原生检查覆盖25个有效场景，合并窗口的历史入口不重复测试。
 
-`outputs/` 只发布两个安装包：macOS 的 `protocol-simulator.dmg` 和 Windows 的 `protocol-simulator-Setup.exe`。macOS 镜像包含 Universal `.app` 和 Applications 快捷入口；指南、示例、许可和构建摘要位于“资料”文件夹。暂存文件位于 `work/`，打包完成后清理。
+`outputs/` 发布 macOS、Windows 安装包及 Linux 对应架构的服务器压缩包和桌面 DEB。macOS 包为 `protocol-simulator.dmg`，Windows 包为 `protocol-simulator-Setup.exe`。macOS 镜像包含 Universal `.app` 和 Applications 快捷入口；指南、示例、许可和构建摘要位于“资料”文件夹。暂存文件位于 `work/`，打包完成后清理。
 
 `scripts/package_protocol.py` 校验当前构建后打包。NSIS 安装器按用户安装，在改动应用前检测 WebView2；已有应用运行或依赖安装失败时退出。升级保留已有示例，卸载只清理明确的程序文件，不递归删除安装目录，也不移除 WebView2 共享运行时。打包后用 7-Zip 解包核对程序和引导程序哈希，并验证安装器的图标、版本资源。安装器当前未做 Authenticode 签名。
 
@@ -75,3 +75,25 @@ IEC104 工程档为64通道、640000点；Modbus 档为2通道、254装置、254
 普通 `go test` 跳过需要桌面的原生检查；构建脚本通过 `GYLAB_NATIVE_SMOKE_BINARY` 启用。Windows 交叉编译不代表其原生界面通过，macOS Universal 包的运行结论以实际测试架构为准，串口 PTY 不代替物理 RS-485。
 
 实网验收需核对可回连的 IP、平台配置、IEC104 激活、命令确认、绑定反馈和属性回读。
+
+## Linux 服务器构建
+
+运行 `python3 scripts/build_linux_server.py`，先执行核心与 runner 的竞态测试及静态检查，再生成 amd64/arm64 的服务器压缩包。程序名为 `prs`，版本来自 `wails.json`，不链接 Wails/GTK/WebKit。运行默认热加载工程，校验失败保留旧配置；只重启变更通道并隔离其他工程。交叉构建与 Linux 实机、systemd 验收分别记录。
+
+## Linux 桌面构建与验收
+
+在 Ubuntu 24.04 目标架构环境安装 Go、Python、C 编译工具、pkg-config、GTK3/WebKitGTK 4.1 开发包和 dpkg-dev，然后执行：
+
+```bash
+python3 scripts/build_linux_desktop.py
+go test -c -tags desktop,production,webkit2_41 -o /tmp/protocol-native.test .
+sudo python3 scripts/verify_linux_desktop.py --package outputs/protocol-simulator-desktop-linux-amd64.deb --smoke-binary /tmp/protocol-native.test --output verification/linux-desktop-runtime --user "$USER"
+```
+
+验收另需 Xvfb、dbus-x11、xdotool、x11-utils 和中文字体。在没有既有 protocol-simulator 桌面安装的专用测试账户运行；测试会安装程序、以普通用户启动真实窗口并操作保存文件，结束后卸载且检查工程保留。不覆盖系统 `ps`。当前 Linux 自动验收使用 X11/Xvfb，Wayland 需另做实际验证。
+
+服务器与桌面共享 `internal/core/`，服务器入口为 `cmd/prs/`，桌面入口继续使用根目录。Linux 专用窗口图标和分组配置通过平台文件隔离，其他平台返回原有默认值。Linux 交付版本也来自 `wails.json`；本地 DEB 在未配置作者邮箱时使用 `noreply@localhost`，正式分发前可配置作者联系信息。
+
+## 服务器终端界面验收
+
+`internal/observe/` 提供本机所属用户的观测与数据点操作接口，`internal/tui/` 只包含客户端界面；不持有引擎生命周期。手动操作只修改运行时数据点，不写工程文件、不暂停自动规则。通过 `python3 scripts/verify_tui_posix.py --binary PATH_TO_PRS --output verification/tui-runtime` 在 macOS/Linux 的真实 PTY 中验证双工程持续通信、搜索、点位分页、报文与日志、暂停、终端恢复、退出/Ctrl+C/崩溃和观测连接丢失隔离。验收使用 Python 标准库，无需图形桌面。

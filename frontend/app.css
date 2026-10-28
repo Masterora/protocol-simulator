@@ -4683,3 +4683,29 @@ body.native-window #remote-config-dialog.native-content {
   margin: 0;
   padding: 0;
 }
+
+.creation-button,
+.ribbon-title .creation-button {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+.creation-button svg {
+  display: block;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+.creation-button:focus-visible {
+  outline: 2px solid #8ab9ff;
+  outline-offset: 2px;
+}

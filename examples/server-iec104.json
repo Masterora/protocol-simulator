@@ -1,0 +1,65 @@
+{
+  "version": 2,
+  "name": "IEC104服务器示例",
+  "channels": [
+    {
+      "id": "iec104-server",
+      "name": "IEC104子站",
+      "protocol": "iec104",
+      "role": "server",
+      "transport": "tcp-server",
+      "address": "127.0.0.1:24040",
+      "timeoutMs": 3000,
+      "devices": [
+        {
+          "id": "device-1",
+          "name": "装置1",
+          "unit": 1,
+          "commonAddress": 1,
+          "points": [
+            {
+              "address": 1,
+              "kind": "yx",
+              "wireType": 1,
+              "name": "开关状态",
+              "value": 0,
+              "quality": 0
+            },
+            {
+              "address": 16385,
+              "kind": "yc",
+              "wireType": 13,
+              "name": "电压",
+              "value": 220.5,
+              "quality": 0
+            }
+          ],
+          "dataTests": {
+            "telemetry": {
+              "stopOnDisconnect": false,
+              "rules": [
+                {
+                  "enabled": true,
+                  "kind": "yx",
+                  "points": "1",
+                  "intervalMs": 2000,
+                  "mode": "toggle",
+                  "min": 0,
+                  "max": 1
+                },
+                {
+                  "enabled": true,
+                  "kind": "yc",
+                  "points": "16385",
+                  "intervalMs": 1000,
+                  "mode": "report",
+                  "cause": 1
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

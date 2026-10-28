@@ -26,7 +26,7 @@ go test ./... -count=1 -v -timeout=90s > verification/brand-go-tests.txt 2>&1
 (cd scripts/windows-resources && go test ./... -count=1) > verification/windows-resource-tests.txt 2>&1
 go vet ./... > verification/vet.txt 2>&1
 go test -race ./... -count=1 -timeout=120s > verification/macos-race-tests.txt 2>&1
-python3 scripts/verify_serial_macos.py > verification/macos-serial-tests.txt 2>&1
+python3 scripts/verify_serial_posix.py > verification/macos-serial-tests.txt 2>&1
 node --test tests/ui.test.mjs > verification/brand-ui-tests.txt 2>&1
 python3 scripts/build_windows_cross.py > verification/windows-cross-build.txt 2>&1
 # Use the exact framework version declared by this repository. A matching local

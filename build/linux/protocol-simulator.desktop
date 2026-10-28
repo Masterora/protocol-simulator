@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=protocol-simulator
+Comment=IEC104 and Modbus protocol simulator
+Exec=/usr/bin/protocol-simulator
+Icon=protocol-simulator
+Terminal=false
+Categories=Development;Network;
+StartupNotify=true
+StartupWMClass=protocol-simulator

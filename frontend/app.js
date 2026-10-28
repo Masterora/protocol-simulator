@@ -1622,9 +1622,13 @@ function renderPoints(c) {
   $('point-scroll').scrollTop = scroll;
 }
 function messageSummary(m) {
-  return ['SYS', 'ERR'].includes(m.direction) && m.peer && !String(m.summary || '').includes(m.peer)
-    ? `${m.summary || ''} · ${m.peer}`
-    : m.summary || '';
+  const summary =
+    m.direction === 'SYS' && /^对端连接已(?:断开|关闭)/.test(m.summary || '')
+      ? '连接已断开'
+      : m.summary || '';
+  return ['SYS', 'ERR'].includes(m.direction) && m.peer && !summary.includes(m.peer)
+    ? `${summary} · ${m.peer}`
+    : summary;
 }
 function filteredMessages() {
   const source = paused ? frozen : snapshot.messages,
@@ -3453,7 +3457,16 @@ function renderDebug() {
     )
     .slice(-200);
   $('debug-content').textContent = rows
-    .map((m) => m.time + '  ' + m.direction + '  ' + messageSummary(m))
+    .map(
+      (m) =>
+        m.time +
+        '  ' +
+        m.direction +
+        '  [' +
+        (channel()?.name || selected) +
+        '] ' +
+        messageSummary(m),
+    )
     .join('\n');
 }
 const managerTransportNames = {

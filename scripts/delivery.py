@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 NATIVE_SCENARIOS = 25
-SOURCE_DIRS = {"frontend", "internal", "tests", "scripts", "build", "examples", ".github"}
+SOURCE_DIRS = {"frontend", "internal", "cmd", "tests", "scripts", "build", "examples", ".github"}
 ROOT_FILES = {"README.md", "CONTRIBUTING.md", "THIRD-PARTY.txt", "AGENTS.md", "go.mod", "go.sum", "package.json", "package-lock.json", "wails.json", "build-macos.sh", "build.ps1", ".gitignore", ".gitattributes", ".editorconfig", ".prettierrc.json", ".prettierignore"}
 EXCLUDED_DIRS = {".git", "node_modules", "work", "outputs", "verification", "references", "__pycache__", "wailsjs", ".venv"}
 

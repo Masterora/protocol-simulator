@@ -1005,6 +1005,41 @@ async function setup(config = {}, nativeContext = null, initialOverrides = {}) {
     },
   };
 }
+test('new project keeps its text label while other creation actions use accessible plus symbols', async () => {
+  const h = await setup();
+  try {
+    for (const [id, label] of [
+      ['add-channel', '新增通道'],
+      ['add-device', '新增装置'],
+      ['remote-mapping-add', '添加绑定'],
+      ['auto-data-add', '添加规则'],
+    ]) {
+      const button = h.$(id);
+      assert.equal(button.textContent.trim(), '');
+      assert.equal(button.getAttribute('aria-label'), label);
+      assert.equal(button.getAttribute('title'), label);
+      assert.ok(button.classList.contains('creation-button'));
+      assert.equal(button.querySelector('svg').getAttribute('aria-hidden'), 'true');
+      assert.equal(button.querySelector('path').getAttribute('d'), 'M8 2v12M2 8h12');
+    }
+    assert.equal(h.$('new-project').textContent.trim(), '新建');
+    assert.equal(h.$('new-project').getAttribute('aria-label'), '新建工程');
+    assert.equal(h.$('new-project').querySelector('svg'), null);
+    h.$('new-project').click();
+    await tick();
+    assert.equal(h.$('confirm-dialog').open, true);
+    h.$('confirm-input').value = '图标工程';
+    h.$('confirm-actions').querySelector('button[value=ok]').click();
+    await settleInline();
+    assert.ok(h.calls.some(([method, args]) => method === 'NewProject' && args[0] === '图标工程'));
+    assert.equal(
+      h.calls.some(([method]) => ['StopChannel', 'StopAll'].includes(method)),
+      false,
+    );
+  } finally {
+    await h.close();
+  }
+});
 test('polling preserves channel element focus and prevents a duplicate pending connection', async () => {
   const h = await setup();
   try {
@@ -1178,6 +1213,24 @@ test('connection addresses are visible in traffic and debug logs and searchable 
         time: '12:03',
         channelId: 'a',
         direction: 'SYS',
+        summary: '对端连接已断开；通道仍有 1 个连接',
+        peer: '127.0.0.1:51927',
+        hex: '',
+      },
+      {
+        sequence: 5,
+        time: '12:04',
+        channelId: 'a',
+        direction: 'SYS',
+        summary: '对端连接已关闭（通道停止）',
+        peer: '127.0.0.1:51928',
+        hex: '',
+      },
+      {
+        sequence: 6,
+        time: '12:05',
+        channelId: 'a',
+        direction: 'SYS',
         summary: '通道已停止',
         peer: '',
         hex: '',
@@ -1191,9 +1244,13 @@ test('connection addresses are visible in traffic and debug logs and searchable 
       const text = h.$(id).textContent;
       assert.match(text, /传输连接已建立 · 10\.20\.12\.59:2426/);
       assert.match(text, /连接已断开 · \[::1\]:2404/);
+      assert.match(text, /连接已断开 · 127\.0\.0\.1:51927/);
+      assert.match(text, /连接已断开 · 127\.0\.0\.1:51928/);
+      assert.doesNotMatch(text, /对端|通道仍有/);
       assert.equal(text.split('127.0.0.1:2404').length - 1, 1);
       assert.doesNotMatch(text, /通道已停止 ·/);
     }
+    assert.match(h.$('debug-content').textContent, /12:01  SYS  \[a\] 连接已断开 · \[::1\]:2404/);
     h.$('message-search').value = '10.20.12.59:2426';
     h.$('message-search').dispatchEvent(new h.w.Event('input', { bubbles: true }));
     assert.equal(h.$('message-rows').children.length, 1);

@@ -1,4 +1,4 @@
-"""Run real serial transport tests through two disposable macOS pseudo terminals."""
+"""Run real serial transport tests through two disposable POSIX pseudo terminals."""
 import errno
 import os
 from pathlib import Path
@@ -11,8 +11,8 @@ import tty
 
 
 def main():
-    if sys.platform != 'darwin':
-        raise SystemExit('This serial verification runner requires macOS.')
+    if sys.platform not in {'darwin', 'linux'}:
+        raise SystemExit('This serial verification runner requires macOS or Linux.')
     pairs = [pty.openpty(), pty.openpty()]
     stop = threading.Event()
     for _, slave in pairs:
