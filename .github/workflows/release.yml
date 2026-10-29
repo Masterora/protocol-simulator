@@ -56,7 +56,13 @@ jobs:
       - name: Build and verify Windows installer
         shell: pwsh
         run: |
-          ./build.ps1
+          try { ./build.ps1 } catch {
+            Get-ChildItem verification -Filter *.txt | ForEach-Object {
+              Write-Host $_.Name
+              Get-Content $_.FullName -Tail 40
+            }
+            throw
+          }
           python scripts/package_protocol.py
           if ($LASTEXITCODE) { throw 'Windows packaging failed' }
           ./tests/windows_installer_smoke.ps1 -Setup outputs/protocol-simulator-Setup.exe -Application build/bin/protocol-simulator.exe

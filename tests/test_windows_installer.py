@@ -1,18 +1,45 @@
 """Installer data boundaries and upgrade/uninstall preservation rules."""
 from pathlib import Path
 import json
+import hashlib
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from windows_installer import generate_file_lists, installer_files, nsis_string, verify_application_resources, windows_resource_spec
+import windows_installer
 
 
 class WindowsInstallerTests(unittest.TestCase):
+    def test_bootstrapper_signature_check_prefers_modern_powershell_and_keeps_legacy_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cached = root / "work/installer-runtime/MicrosoftEdgeWebview2Setup.exe"
+            cached.parent.mkdir(parents=True)
+            cached.write_bytes(b"MZ signature verification fixture")
+            cached.with_suffix(".json").write_text(json.dumps({
+                "source": windows_installer.BOOTSTRAPPER_URL,
+                "sha256": hashlib.sha256(cached.read_bytes()).hexdigest(),
+            }), encoding="utf-8")
+            for modern in (True, False):
+                with self.subTest(modern=modern), patch.object(windows_installer.sys, "platform", "win32"), \
+                        patch.object(windows_installer.shutil, "which", side_effect=lambda name: name if modern or name == "powershell" else None), \
+                        patch.object(windows_installer.subprocess, "run") as verify:
+                    self.assertEqual(windows_installer.webview_bootstrapper(root), cached)
+                    verify.assert_called_once()
+                    args = verify.call_args.args[0]
+                    self.assertEqual(args[0], "pwsh" if modern else "powershell")
+                    self.assertIn(str(root / "build/windows/verify-bootstrapper.ps1"), args)
+                    self.assertTrue(verify.call_args.kwargs["check"])
+                    verify.side_effect = subprocess.CalledProcessError(1, args)
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        windows_installer.webview_bootstrapper(root)
+
     def test_changed_version_reaches_manifest_and_numeric_and_string_resources(self):
         source = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="resource fixture ") as directory:

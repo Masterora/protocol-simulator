@@ -204,7 +204,10 @@ def webview_bootstrapper(base):
     if not cached.read_bytes().startswith(b"MZ"):
         raise ValueError("Invalid cached WebView2 bootstrapper")
     if sys.platform == "win32":
-        subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-File",
+        powershell = shutil.which("pwsh") or shutil.which("powershell")
+        if not powershell:
+            raise RuntimeError("PowerShell is required to verify the Microsoft bootstrapper signature")
+        subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-File",
                         str(Path(base) / "build/windows/verify-bootstrapper.ps1"), "-Path", str(cached)], check=True)
     return cached
 
