@@ -6,11 +6,15 @@ import (
 	"gytest-go/internal/core"
 	"gytest-go/internal/observe"
 	"os"
+	"runtime"
 	"strconv"
 	"testing"
 )
 
 func TestPointCommandTargetsRunningProcessAndLeavesSavedConfigurationUntouched(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("point commands attach through Unix-only observation sockets")
+	}
 	path := projectFile(t, "modbus-tcp", unusedAddress(t), true)
 	before, err := os.ReadFile(path)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -202,6 +203,9 @@ func TestHotReloadExplicitDataRulesUseNewConfiguration(t *testing.T) {
 }
 
 func TestProjectWatcherFollowsDirectorySymlinkReplacement(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("atomic replacement of directory symlinks requires Unix rename semantics")
+	}
 	base := t.TempDir()
 	path := projectFile(t, "modbus-tcp", unusedAddress(t), true)
 	p, _ := core.ReadProject(path)
