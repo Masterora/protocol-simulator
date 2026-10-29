@@ -20,10 +20,11 @@ class WindowsInstallerTests(unittest.TestCase):
             (root / "build/windows").mkdir(parents=True)
             for name in ("icon.ico", "app.manifest"):
                 shutil.copy2(source / "build/windows" / name, root / "build/windows" / name)
-            metadata = json.loads((source / "wails.json").read_text())
+            metadata = json.loads((source / "wails.json").read_text(encoding="utf-8"))
+            metadata["info"]["productName"] = "规约模拟工具"
             metadata["info"]["productVersion"] = "13.27.4095"
             config = root / "wails.json"
-            config.write_text(json.dumps(metadata))
+            config.write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
             stub, binary = root / "stub.go", root / "test.exe"
             stub.write_text("package main\nfunc main() {}\n")
             env = {**os.environ, "GOOS": "windows", "GOARCH": "amd64", "CGO_ENABLED": "0"}
@@ -31,11 +32,11 @@ class WindowsInstallerTests(unittest.TestCase):
             subprocess.run(["go", "run", ".", str(root), str(binary)], cwd=source / "scripts/windows-resources", check=True, capture_output=True)
             verify_application_resources(root, binary)
             metadata["info"]["productVersion"] = "13.27.4096"
-            config.write_text(json.dumps(metadata))
+            config.write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "manifest resource mismatch"):
                 verify_application_resources(root, binary)
             metadata["info"]["productVersion"] = "65536.0.0"
-            config.write_text(json.dumps(metadata))
+            config.write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "65535"):
                 windows_resource_spec(root)
 

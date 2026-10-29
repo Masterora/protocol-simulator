@@ -15,14 +15,16 @@ IEC104、Modbus TCP/RTU 规约调试与模拟工具。桌面版提供点表、�
 
 ## 安装
 
-| 系统         | 交付包                                                 | 运行要求                            |
-| ------------ | ------------------------------------------------------ | ----------------------------------- |
-| macOS        | `protocol-simulator.dmg`                               | macOS 12.3+，Apple Silicon 或 Intel |
-| Windows      | `protocol-simulator-Setup.exe`                         | Windows 10/11 x64                   |
-| Linux 桌面   | `protocol-simulator-desktop-linux-{amd64,arm64}.deb`   | Ubuntu 24.04，X11                   |
-| Linux 服务器 | `protocol-simulator-server-linux-{amd64,arm64}.tar.gz` | Linux amd64 / arm64，无需图形环境   |
+| 系统                           | 直接下载                                                                                                                                                              | 运行要求          |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| macOS（Apple Silicon / Intel） | [protocol-simulator.dmg](https://github.com/Masterora/protocol-simulator/releases/latest/download/protocol-simulator.dmg)                                             | macOS 12.3+       |
+| Windows x64                    | [protocol-simulator-Setup.exe](https://github.com/Masterora/protocol-simulator/releases/latest/download/protocol-simulator-Setup.exe)                                 | Windows 10/11     |
+| Linux 桌面 amd64               | [protocol-simulator-desktop-linux-amd64.deb](https://github.com/Masterora/protocol-simulator/releases/latest/download/protocol-simulator-desktop-linux-amd64.deb)     | Ubuntu 24.04，X11 |
+| Linux 桌面 arm64               | [protocol-simulator-desktop-linux-arm64.deb](https://github.com/Masterora/protocol-simulator/releases/latest/download/protocol-simulator-desktop-linux-arm64.deb)     | Ubuntu 24.04，X11 |
+| Linux 服务器 amd64             | [protocol-simulator-server-linux-amd64.tar.gz](https://github.com/Masterora/protocol-simulator/releases/latest/download/protocol-simulator-server-linux-amd64.tar.gz) | 无需图形环境      |
+| Linux 服务器 arm64             | [protocol-simulator-server-linux-arm64.tar.gz](https://github.com/Masterora/protocol-simulator/releases/latest/download/protocol-simulator-server-linux-arm64.tar.gz) | 无需图形环境      |
 
-下载入口：[GitHub Releases](https://github.com/Masterora/protocol-simulator/releases)。选择与 CPU 架构对应的 Linux 包，服务器包与桌面包可以独立使用。
+完整版本与更新说明：[GitHub Releases](https://github.com/Masterora/protocol-simulator/releases)。下载上表的安装包即可使用；GitHub 自动生成的 Source code 是源码。可用同一 Release 中的 `SHA256SUMS` 校验下载文件。
 
 - **macOS**：打开 DMG，将应用拖到 Applications，推出镜像后从“应用程序”启动。指南和示例位于镜像的“资料”文件夹。当前使用本地签名；如系统阻止打开，可在“系统设置 → 隐私与安全性”中允许打开。
 - **Windows**：运行 Setup，按当前用户安装，并创建快捷方式和卸载入口。缺少 WebView2 时会联网安装微软运行时。

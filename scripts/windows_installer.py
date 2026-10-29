@@ -212,7 +212,7 @@ def webview_bootstrapper(base):
 def build_installer(base, payload, output):
     base, payload, output = Path(base).resolve(), Path(payload).resolve(), Path(output).resolve()
     verify_application_resources(base, payload / "protocol-simulator.exe")
-    version = json.loads((base / "wails.json").read_text())["info"]["productVersion"]
+    version = json.loads((base / "wails.json").read_text(encoding="utf-8"))["info"]["productVersion"]
     if not re.fullmatch(r"\d+\.\d+\.\d+", version):
         raise ValueError("Windows installer requires a three-component numeric version")
     makensis = tool_path("MAKENSIS", ("makensis", "makensis.exe"), "NSIS/makensis.exe")
