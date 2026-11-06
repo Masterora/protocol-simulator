@@ -677,10 +677,10 @@ docker buildx imagetools inspect "derorange/protocol-simulator:$VERSION"
 
 ### 挂载配置并运行
 
-以下在部署服务器的新工作目录执行，需要 Docker 和 Python 3。将 `1.0.1` 换成要部署的版本；也可以使用本地构建的 `protocol-simulator:local`，跳过拉取。
+以下在部署服务器的新工作目录执行，需要 Docker 和 Python 3。将 `1.0.2` 换成要部署的版本；也可以使用本地构建的 `protocol-simulator:local`，跳过拉取。
 
 ```bash
-IMAGE=derorange/protocol-simulator:1.0.1
+IMAGE=derorange/protocol-simulator:1.0.2
 docker pull "$IMAGE"
 mkdir -p config
 
@@ -727,9 +727,9 @@ docker start prs
 在支持 `docker save --platform` 的联网 Docker 上导出对应架构；以下为 amd64，ARM 服务器改为 `linux/arm64`：
 
 ```bash
-docker pull --platform linux/amd64 derorange/protocol-simulator:1.0.1
+docker pull --platform linux/amd64 derorange/protocol-simulator:1.0.2
 docker image save --platform linux/amd64 \
-  -o protocol-simulator-image.tar derorange/protocol-simulator:1.0.1
+  -o protocol-simulator-image.tar derorange/protocol-simulator:1.0.2
 gzip protocol-simulator-image.tar
 shasum -a 256 protocol-simulator-image.tar.gz
 ```
@@ -739,7 +739,7 @@ shasum -a 256 protocol-simulator-image.tar.gz
 ```bash
 sha256sum protocol-simulator-image.tar.gz
 docker load -i protocol-simulator-image.tar.gz
-docker run --rm derorange/protocol-simulator:1.0.1 version
+docker run --rm derorange/protocol-simulator:1.0.2 version
 ```
 
 然后按前面的挂载配置步骤运行，跳过 `docker pull`。离线导入不需要 Docker Hub 登录，也不修改 Docker 服务的网络或镜像源配置。

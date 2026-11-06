@@ -6,6 +6,7 @@ import (
 	"gytest-go/internal/core"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 )
@@ -18,6 +19,13 @@ func TestCreateEditRoundTripPreservesDeviceMetadataAndRejectsStaleWrites(t *test
 	}
 	if _, err = Create(path, "overwrite"); err == nil {
 		t.Fatal("overwrote existing project")
+	}
+	originalInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && originalInfo.Mode().Perm() != 0600 {
+		t.Fatal("unexpected permissions on new project", originalInfo.Mode())
 	}
 	c := doc.Project.Channels[0]
 	next, result, err := Apply(doc.Project, Request{Resource: "device", Action: "add", Channel: c.ID, Fields: Fields(map[string]any{"pointCount": 3, "name": "装置甲"})})
@@ -57,8 +65,11 @@ func TestCreateEditRoundTripPreservesDeviceMetadataAndRejectsStaleWrites(t *test
 	if point.WireType != 36 || point.Value != 220.5 || point.Name != "电压" {
 		t.Fatal(point)
 	}
-	info, _ := os.Stat(path)
-	if info.Mode().Perm() != 0600 {
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != originalInfo.Mode().Perm() {
 		t.Fatal("permissions changed", info.Mode())
 	}
 }
