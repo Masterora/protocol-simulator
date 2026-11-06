@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -410,5 +411,24 @@ func TestNativeManagerInlineEditsReachParentWithoutOpeningEditor(t *testing.T) {
 	}
 	if _, err = remote.call("OpenNativeWindow", rawArgs(NativeContext{Kind: "channel-dialog", Channel: id})); err == nil {
 		t.Fatal("manager should not need generic window-opening access")
+	}
+}
+
+// A native save panel waits for a person, so it must outlive the ordinary IPC deadline.
+func TestNativeExportWaitsForFileDialogDecision(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var q nativeRequest
+		if err := json.NewDecoder(r.Body).Decode(&q); err != nil || q.Method != "ExportPointTable" {
+			http.Error(w, "unexpected request", 400)
+			return
+		}
+		time.Sleep(11 * time.Second)
+		_ = json.NewEncoder(w).Encode(nativeReply{Value: json.RawMessage(`"/tmp/points.xlsx"`)})
+	}))
+	defer server.Close()
+	remote := &nativeRemote{address: server.URL, session: "file-dialog"}
+	got, err := remote.call("ExportPointTable", nil)
+	if err != nil || string(got) != `"/tmp/points.xlsx"` {
+		t.Fatalf("save dialog timed out before user decision: %s %v", got, err)
 	}
 }

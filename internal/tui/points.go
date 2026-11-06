@@ -14,6 +14,47 @@ import (
 	"gytest-go/internal/observe"
 )
 
+func pointDetailLines(protocol string, point core.Point, mappings []core.ControlMapping, names map[string]string, bindable bool) []string {
+	lines := []string{}
+	field := func(label string, value any) {
+		if value == "" {
+			value = "—"
+		}
+		lines = append(lines, fmt.Sprintf("%s：%v", label, value))
+	}
+	field("点位", point.Address)
+	field("名称", point.Name)
+	field("类型", translated(point.Kind, kindLabels))
+	field("数值", point.Value)
+	field("品质", point.Quality)
+	if bindable {
+		field("绑定点位", bindingText(mappings, names))
+	}
+	field("上报时间", formatPointTime(point.CommunicationAt, time.DateTime))
+	if point.Feedback != "" {
+		field("反馈", point.Feedback)
+	}
+	if point.Timestamp != "" {
+		field("报文时标", formatPointTime(point.Timestamp, time.DateTime))
+	}
+	if point.TimeInvalid {
+		field("时间无效", "是")
+	}
+	if protocol == "iec104" {
+		field("报文类型", choiceLabel("wireType", fmt.Sprint(point.WireType)))
+	}
+	if point.DataType != "" {
+		field("数据类型", point.DataType)
+	}
+	if point.ByteOrder != "" {
+		field("字节序", point.ByteOrder)
+	}
+	if point.Tab != "" && point.Tab != point.Kind {
+		field("分类", translated(point.Tab, kindLabels))
+	}
+	return lines
+}
+
 func pointKinds(protocol string, counts map[string]int) []string {
 	kinds := []string{"yx", "yc", "yk", "yt"}
 	if strings.HasPrefix(protocol, "modbus") {
@@ -61,8 +102,9 @@ func (m *model) switchPointKind(step int) {
 	m.pointKind = kinds[(index+step+len(kinds))%len(kinds)]
 	m.pointOffset, m.cursor = 0, 0
 	m.filter = ""
-	// A paused viewer can change scope, but must not display the previous kind's data.
+	// A scope change must not display the previous kind's data.
 	m.detail.View.Points = nil
+	m.detail.View.PointBindings = nil
 	m.detail.View.PointMatches = 0
 }
 
@@ -219,10 +261,10 @@ func (m *model) pointNavigation(width int) string {
 		if kind == m.pointKind {
 			selectedIndex = len(labels)
 		}
-		labels = append(labels, fmt.Sprintf("%s %d", translated(kind, kindLabels), m.detail.View.PointKinds[kind]))
+		labels = append(labels, translated(kind, kindLabels))
 	}
 	if uniseg.StringWidth(" "+strings.Join(labels, "  ")+" ") > width {
-		return navigation([]string{fmt.Sprintf("%s %d", translated(m.pointKind, kindLabels), m.detail.View.PointKinds[m.pointKind]), "←/→ 切换分类"}, 0, width)
+		return navigation([]string{translated(m.pointKind, kindLabels), "←/→ 切换分类"}, 0, width, "─")
 	}
-	return navigation(labels, selectedIndex, width)
+	return navigation(labels, selectedIndex, width, "─")
 }

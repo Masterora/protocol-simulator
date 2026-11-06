@@ -55,10 +55,10 @@ func TestLegacyPointPagesSortAcrossBoundariesAndKeepKindsSeparate(t *testing.T) 
 }
 
 func TestPointKindSwitchResetsSearchPageAndRejectsPreviousKindResponse(t *testing.T) {
-	m := model{view: 3, pointKind: "yx", pointOffset: 100, filter: "old", paused: true}
+	m := model{view: 3, pointKind: "yx", pointOffset: 100, filter: "old"}
 	m.detail.View.Points = []core.Point{{Kind: "yx", Address: 123}}
 	m.switchPointKind(1)
-	if m.pointKind != "yc" || m.pointOffset != 0 || m.filter != "" || len(m.rows()) != 0 || !m.paused {
+	if m.pointKind != "yc" || m.pointOffset != 0 || m.filter != "" || len(m.rows()) != 0 {
 		t.Fatal(m)
 	}
 	m.apply(update{request: request{kind: "yx"}, detail: observe.Info{View: core.Inspection{Points: []core.Point{{Kind: "yx", Address: 123}}}}})
@@ -73,7 +73,7 @@ func TestPointKindSwitchResetsSearchPageAndRejectsPreviousKindResponse(t *testin
 	}
 }
 
-func TestControlsAndStatusStayAtBottomInEveryViewAndDetail(t *testing.T) {
+func TestContextControlsAndStatusStayAtBottomInEveryViewAndDetail(t *testing.T) {
 	m := model{discovered: true, connected: true, socket: "s", pointKind: "yc"}
 	for view := 0; view < 7; view++ {
 		for _, width := range []int{60, 90, 150} {
@@ -88,10 +88,10 @@ func TestControlsAndStatusStayAtBottomInEveryViewAndDetail(t *testing.T) {
 					if strings.Contains(line, "┌") || strings.Contains(line, "╭") {
 						table = i
 					}
-					if strings.Contains(line, "[q]") {
+					if i == len(lines)-2 {
 						action = i
 					}
-					if strings.Contains(line, "报文缺口") {
+					if strings.Contains(line, "Produced by Der_Orange") {
 						status = i
 					}
 				}
@@ -100,6 +100,9 @@ func TestControlsAndStatusStayAtBottomInEveryViewAndDetail(t *testing.T) {
 				}
 				if !strings.Contains(lines[len(lines)-3], "└") {
 					t.Fatal("footer is not below table", plain)
+				}
+				if !strings.Contains(lines[1], "[q]退出") || strings.Contains(lines[len(lines)-2], "[q]") {
+					t.Fatal("global actions duplicated in footer", plain)
 				}
 			}
 		}

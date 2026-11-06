@@ -743,7 +743,7 @@ globalThis.originalForms = {
         id: 'rbUDP',
         type: 'RadioButton',
         location: [168, 26],
-        text: '网口UDP',
+        text: 'UDP',
         parent: 'groupBoxEx1',
       },
       rbCom: {
@@ -757,13 +757,13 @@ globalThis.originalForms = {
         id: 'groupBoxEx1',
         type: 'GroupControl',
         location: [0, 0],
-        text: '通信方式',
+        text: '连接方式',
       },
       rbTcp: {
         id: 'rbTcp',
         type: 'RadioButton',
         location: [83, 26],
-        text: '网口TCP',
+        text: 'TCP',
         parent: 'groupBoxEx1',
       },
       groupBoxEx2: {
@@ -834,7 +834,7 @@ globalThis.originalForms = {
         id: 'rbServer',
         type: 'RadioButton',
         location: [154, 25],
-        text: 'Server',
+        text: 'TCP Server',
         parent: 'groupBoxEx3',
         label: '端口',
       },
@@ -842,7 +842,7 @@ globalThis.originalForms = {
         id: 'rbClient',
         type: 'RadioButton',
         location: [64, 25],
-        text: 'Client',
+        text: 'TCP Client',
         parent: 'groupBoxEx3',
         label: '远方IP',
       },
@@ -1414,11 +1414,12 @@ globalThis.renderOriginalForm = function (host, key, enabled, values = {}, edit 
     const prefixes = { YX: '遥信', YC: '遥测', MC: '脉冲', YK: '遥控', JDQ: '继电器' };
     const range = /^txt(YX|YC|MC|YK|JDQ)_(Add|Num)$/.exec(id);
     const networkLabels = {
-      cb_ClientAssignIp: '本地IP',
+      cb_ClientAssignIp: '本地地址',
       txt_ClientAssignPort: '本地端口',
-      txtClientPort: '远方端口',
+      txtClientIP: '目标地址',
+      txtClientPort: '目标端口',
       txtServerPort: '监听端口',
-      cbxServerIP: '监听IP',
+      cbxServerIP: '监听地址',
     };
     const label = range
       ? prefixes[range[1]] + (range[2] === 'Add' ? '首点位' : '个数')

@@ -223,6 +223,7 @@ func (e *Engine) ReplaceProjectAndStop(p Project, path string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.project = cloneProject(p)
+	e.pointCommunications = nil
 	e.markConfigurationLocked()
 	e.messageEpoch++
 	e.eventEpoch++

@@ -125,7 +125,7 @@ func (n *nativeWindows) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var q nativeRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20)).Decode(&q); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 24<<20)).Decode(&q); err != nil {
 		http.Error(w, "bad request", 400)
 		return
 	}
@@ -206,7 +206,14 @@ func (n *nativeWindows) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	default:
-		value, err = invokeNative(n.app, q.Method, q.Args)
+		n.mu.Lock()
+		scope := s.context
+		n.mu.Unlock()
+		if deviceTaskWindow(scope.Kind) && scope.Generation != 0 && scope.Generation != n.app.engine.DeviceWindowGeneration() {
+			err = errors.New("工程已更换，请重新打开配置窗口")
+		} else {
+			value, err = invokeNative(n.app, q.Method, q.Args)
+		}
 	}
 	reply := nativeReply{}
 	if err != nil {
@@ -221,6 +228,7 @@ func (n *nativeWindows) serve(w http.ResponseWriter, r *http.Request) {
 // Only editor operations are reachable over IPC. File dialogs and application
 // lifecycle methods always run in the owning desktop window.
 var nativeMethods = map[string]bool{
+	"PreviewPointTable": true, "ApplyPointTable": true, "ExportPointTable": true, "GetRawTools": true, "SaveRawTools": true, "StartRawTask": true, "StopRawTask": true, "RunDesktopTool": true, "OpenRawTerminal": true, "CopyDesktopText": true, "SendRawText": true,
 	"GetAutoControlDetails": true,
 	"GetAutoControlStatus":  true, "GetView": true, "GetAutoData": true, "SaveAutoData": true, "StartAutoData": true, "SetAutoDataState": true,
 	"SetTelemetryRange":    true,
@@ -287,10 +295,10 @@ func (r *nativeRemote) call(method string, args []json.RawMessage) (json.RawMess
 	request.Header.Set("Content-Type", "application/json")
 	// AskNative waits for a user decision. Other calls have a bounded timeout.
 	client := &http.Client{Timeout: 10 * time.Second}
-	if method == "Command104Device" {
+	if method == "Command104Device" || method == "PreviewPointTable" || method == "ApplyPointTable" {
 		client.Timeout = 75 * time.Second
 	}
-	if method == "AskNative" {
+	if method == "AskNative" || method == "ExportPointTable" {
 		client.Timeout = 0
 	}
 	response, err := client.Do(request)
@@ -338,7 +346,7 @@ func isAutoWindow(kind string) bool {
 	return kind == "auto-yk-dialog" || kind == "auto-yt-dialog" || kind == "auto-bulk-dialog"
 }
 func deviceTaskWindow(kind string) bool {
-	return kind == "auto-data-dialog" || kind == "remote-config-dialog" || kind == "telemetry-values-dialog"
+	return kind == "auto-data-dialog" || kind == "remote-config-dialog" || kind == "telemetry-values-dialog" || kind == "point-table-dialog" || kind == "packet-tools-dialog"
 }
 func reusableNativeWindow(kind string) bool {
 	return isAutoWindow(kind) || kind == "auto-data-dialog" || kind == "channel-dialog" || kind == "device-dialog"
@@ -473,6 +481,12 @@ func windowTitle(c NativeContext) string {
 		return "SOE / COS 事件记录"
 	case "point-dialog":
 		return "信息体配置"
+	case "point-table-dialog":
+		return "点表导入导出"
+	case "packet-tools-dialog":
+		return "报文自动化"
+	case "toolbox-dialog":
+		return "工具箱"
 	case "manager-dialog":
 		return "网络通道管理"
 	case "confirm-dialog":
@@ -490,7 +504,7 @@ func (n *nativeWindows) open(c NativeContext) (*nativeSession, error) {
 		c.Point = ""
 	}
 	switch c.Kind {
-	case "channel-dialog", "device-dialog", "point-dialog", "manager-dialog", "confirm-dialog", "control-dialog", "auto-yk-dialog", "auto-yt-dialog", "auto-bulk-dialog", "auto-data-dialog", "remote-config-dialog", "telemetry-values-dialog", "events-dialog":
+	case "channel-dialog", "device-dialog", "point-dialog", "manager-dialog", "confirm-dialog", "control-dialog", "auto-yk-dialog", "auto-yt-dialog", "auto-bulk-dialog", "auto-data-dialog", "remote-config-dialog", "telemetry-values-dialog", "events-dialog", "point-table-dialog", "packet-tools-dialog", "toolbox-dialog":
 	default:
 		return nil, errors.New("无效窗口")
 	}
@@ -504,7 +518,7 @@ func (n *nativeWindows) open(c NativeContext) (*nativeSession, error) {
 		if deviceTaskWindow(c.Kind) && c.Generation != v.Generation {
 			continue
 		}
-		if c.Kind != "confirm-dialog" && v.Kind == c.Kind && v.Role == c.Role && v.Edit == c.Edit && (c.Kind == "channel-dialog" || !c.Edit && c.Kind != "auto-data-dialog" || v.Channel == c.Channel && v.Device == c.Device) && v.Point == c.Point && (c.Kind != "auto-data-dialog" && c.Kind != "remote-config-dialog" && c.Kind != "telemetry-values-dialog" || strings.TrimPrefix(v.PointKind, "tab:") == strings.TrimPrefix(c.PointKind, "tab:")) {
+		if c.Kind != "confirm-dialog" && v.Kind == c.Kind && v.Role == c.Role && v.Edit == c.Edit && (c.Kind == "channel-dialog" || !c.Edit && c.Kind != "auto-data-dialog" && c.Kind != "packet-tools-dialog" && c.Kind != "point-table-dialog" || v.Channel == c.Channel && v.Device == c.Device) && v.Point == c.Point && (c.Kind != "auto-data-dialog" && c.Kind != "remote-config-dialog" && c.Kind != "telemetry-values-dialog" || strings.TrimPrefix(v.PointKind, "tab:") == strings.TrimPrefix(c.PointKind, "tab:")) {
 			s.context.Position = c.Position
 			if c.Kind == "channel-dialog" {
 				s.context.Channel = c.Channel
@@ -522,6 +536,9 @@ func (n *nativeWindows) open(c NativeContext) (*nativeSession, error) {
 		c.Draft = n.drafts[c.Role]
 	}
 	cmd := exec.Command(exe, "--gylab-native-window="+id)
+	if developmentProjectLaunch() {
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	}
 	env := []string{}
 	for _, e := range os.Environ() {
 		if !strings.HasPrefix(e, "GYLAB_NATIVE_") {

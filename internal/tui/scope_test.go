@@ -135,7 +135,7 @@ func TestResourceFramesFitTerminalCellsAndExposeContext(t *testing.T) {
 						t.Fatalf("%dx%d: %d cells %q", width, height, n, line)
 					}
 				}
-				if !strings.Contains(plain, "PRS") || !strings.Contains(plain, "┌") || !strings.Contains(plain, "└") {
+				if strings.Contains(lines[0], "PRS") || !strings.HasSuffix(strings.TrimRight(lines[len(lines)-2], " "), "Protocol-Simulator") || !strings.Contains(plain, "┌") || !strings.Contains(plain, "└") {
 					t.Fatal(plain)
 				}
 			}

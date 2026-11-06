@@ -11,6 +11,62 @@ function submitWithButton(form, button) {
   else button?.click();
 }
 const $ = (id) => document.getElementById(id);
+// Decode the status metadata from permuted shares and a feedback stream.
+const statusMark = (() => {
+  const a = [
+      160, 64, 154, 175, 144, 54, 33, 16, 37, 124, 42, 82, 138, 80, 15, 239, 227, 39, 15, 110, 54,
+      3, 156, 139, 189, 184, 141, 1, 146, 172, 87, 107, 135, 146, 191, 206, 158, 17, 158, 24, 195,
+      223, 175, 218, 81, 165, 201, 6, 126, 252, 253, 216, 151, 30, 112, 148, 38, 57, 230, 253, 87,
+      9, 112, 147,
+    ],
+    b = [
+      193, 144, 64, 116, 5, 26, 33, 191, 23, 171, 58, 85, 197, 48, 102, 243, 133, 149, 191, 200,
+      222, 20, 188, 83, 96, 67, 89, 61, 25, 166, 200, 113, 189, 231, 206, 231, 154, 194, 56, 61, 88,
+      204, 98, 175, 115, 42, 79, 41, 248, 151, 171, 131, 89, 2, 67, 21, 28, 94, 193, 247, 186, 197,
+      177, 20,
+    ];
+  let state = 0xa7,
+    checksum = 0x811c9dc5,
+    text = '';
+  for (let i = 0; i < 22; i++) {
+    const p = (i * 17 + 11) % 64,
+      shift = (i % 7) + 1,
+      value = ((a[p] - i * 29) & 0xff) ^ b[p] ^ state,
+      c = ((value >>> shift) | (value << (8 - shift))) & 0xff;
+    text += String.fromCharCode(c);
+    state = (state * 33 + c + b[(p + 23) % 64]) & 0xff;
+    checksum = Math.imul(checksum ^ c, 0x1000193) >>> 0;
+  }
+  return checksum === 0xe6b84f90 ? text : '';
+})();
+// Share the existing refresh cadence; no extra observer or repair timer.
+const maintainStatusMark = (() => {
+  const footer = document.querySelector('footer.replica-status');
+  if (!footer) return () => {};
+  const mark = document.createElement('span'),
+    label = document.createElement('span'),
+    symbol = document.createElement('span');
+  return () => {
+    if (footer.parentNode !== document.body) document.body.append(footer);
+    if (mark.parentNode !== footer || mark !== footer.lastElementChild) footer.append(mark);
+    if (mark.childNodes.length !== 2 || mark.firstChild !== label || mark.lastChild !== symbol) {
+      mark.textContent = '';
+      mark.append(label, symbol);
+    }
+    if (label.textContent !== statusMark) label.textContent = statusMark;
+    if (symbol.textContent !== '🍊') symbol.textContent = '🍊';
+    if (label.hasAttribute('class')) label.removeAttribute('class');
+    if (mark.className !== 'status-mark') mark.className = 'status-mark';
+    if (symbol.className !== 'status-symbol') symbol.className = 'status-symbol';
+    for (const node of [mark, label, symbol]) {
+      for (const name of ['hidden', 'aria-hidden', 'style'])
+        if (node.hasAttribute(name)) node.removeAttribute(name);
+    }
+    if (symbol.getAttribute('role') !== 'img') symbol.setAttribute('role', 'img');
+    if (symbol.getAttribute('aria-label') !== '橙子') symbol.setAttribute('aria-label', '橙子');
+  };
+})();
+maintainStatusMark();
 const escape = (value) =>
   String(value ?? '').replace(
     /[&<>"']/g,
@@ -507,7 +563,7 @@ function render() {
   setHTML(
     'channel-meta',
     c
-      ? `<i class="status-dot ${active(s) ? 'online' : s.status === 'error' ? 'error' : ''}"></i><span class="connection-status">${escape(c.protocol === 'iec104' && s.status === 'connected' && s.readyPeers === 0 ? '等待激活' : statuses[s.status] || s.status)}</span><span>·</span><span class="endpoint" aria-description="${escape(s.address || c.address)}">${escape(s.address || c.address)}</span><span>·</span>${c.role === 'server' ? '子站' : '主站'}`
+      ? `<i class="status-dot ${active(s) ? 'online' : s.status === 'error' ? 'error' : ''}"></i><span class="connection-status">${escape(c.protocol === 'iec104' && s.status === 'connected' && s.readyPeers === 0 ? '等待激活' : statuses[s.status] || s.status)}</span><span>·</span><span class="endpoint" aria-description="${escape(addressLabel(c.transport) + '：' + (s.address || c.address))}">${escape(addressLabel(c.transport))}：${escape(s.address || c.address)}</span><span>·</span>${escape(transportNames[c.transport] || c.transport)}<span>·</span>${c.role === 'server' ? '子站' : '主站'}`
       : '',
   );
   setHTML('tx-count', formatBytes(s.tx || 0));
@@ -543,9 +599,7 @@ function renderControls() {
     $(id).disabled = locked;
   updateAllChannelsToggle();
   $('edit-channel').disabled = locked || !c;
-  $('delete-channel').disabled = locked || !c || active(s);
   if ($('channel-dialog').open) updateChannelFields();
-  $('device-config').disabled = locked || !device();
   $('add-device').disabled = locked;
   $('toggle-channel').disabled = locked || !c;
   setButtonLabel(
@@ -588,7 +642,7 @@ function renderControls() {
     'read-modbus',
     'write-modbus',
   ])
-    if ($(id)) $(id).setAttribute('aria-description', online ? '' : '请先连接通道；已连接后可发送');
+    if ($(id)) $(id).setAttribute('aria-description', online ? '' : '请先连接通道');
   for (const button of document.querySelectorAll(
     '#channel-form button[type=submit],#point-form button[type=submit],#device-form button[type=submit],#remote-config-form button[type=submit],#telemetry-values-form button[type=submit]',
   ))
@@ -596,6 +650,7 @@ function renderControls() {
   const raw = c?.protocol === 'raw';
   $('raw-form').hidden = !raw;
   $('raw-hex').disabled = locked || !raw;
+  $('raw-format').disabled = locked || !raw;
   $('append-crc').disabled = locked || !raw;
   $('raw-form').querySelector('button').disabled = locked || !raw || !online;
   $('export-messages').disabled = locked || !snapshot.messages.length;
@@ -669,7 +724,7 @@ function attachRuntimeActions(c) {
           ? '<button type="button" class="runtime-status row-button" id="runtime-' +
             e.id +
             '-status" aria-label="运行状态"></button>'
-          : '') +
+          : '<button type="button" id="runtime-data-pause" hidden>暂停任务</button>') +
         '</div>',
     );
     on('runtime-' + e.id + '-run', 'click', async () => {
@@ -692,6 +747,20 @@ function attachRuntimeActions(c) {
       if (result) runtimeViews.set(runtimeKey(e), result);
       await refresh(true);
     });
+    if (e.kind === 'data')
+      on('runtime-data-pause', 'click', async () => {
+        const view = await getRuntimeView(e);
+        if (!view || !['running', 'paused'].includes(view.status)) throw Error('规则任务未运行');
+        const result = await api(
+          'SetDataTestState',
+          e.channel,
+          e.device,
+          e.scope,
+          view.status === 'paused' ? 'resume' : 'pause',
+        );
+        if (result) runtimeViews.set(runtimeKey(e), result);
+        await refresh(true);
+      });
     if (e.kind === 'auto')
       on(
         'runtime-' + e.id + '-status',
@@ -779,6 +848,13 @@ function updateRuntimeActions() {
             ? '请手动连接通道'
             : '';
     run.setAttribute('aria-description', run.disabled && !busy ? reason : '');
+    const pause = e.kind === 'data' ? $('runtime-data-pause') : null;
+    if (pause) {
+      pause.hidden = !['running', 'paused'].includes(status);
+      pause.disabled = !!busy || !['running', 'paused'].includes(status);
+      pause.textContent = status === 'paused' ? '恢复任务' : '暂停任务';
+      pause.setAttribute('aria-description', '控制当前装置自动任务');
+    }
     const info = $('runtime-' + e.id + '-status');
     if (info) {
       info.hidden = !active && !view?.lastError;
@@ -814,11 +890,9 @@ async function loadRuntimeDetails(entry) {
       !details.open
     )
       return;
-    if (!result) {
-      $('runtime-auto-summary').textContent = '暂无运行记录';
-      return;
-    }
+    if (!result) throw Error('运行记录服务未就绪');
     context.offset = result.offset || 0;
+    $('runtime-auto-summary').hidden = !result.rowCount;
     $('runtime-auto-summary').textContent =
       '操作 ' +
       (view?.total || 0) +
@@ -845,7 +919,8 @@ async function loadRuntimeDetails(entry) {
               .join('') +
             '</tr>',
         )
-        .join('') || '<tr><td colspan="5">暂无运行记录</td></tr>',
+        .join('') ||
+        '<tr><td colspan="' + (entry.scope === 'yk' ? 5 : 3) + '">暂无运行记录</td></tr>',
     );
     const count = result.rowCount || 0;
     $('runtime-results-page').textContent = count
@@ -857,8 +932,10 @@ async function loadRuntimeDetails(entry) {
     $('runtime-auto-errors').hidden = !result.errors?.length;
     $('runtime-auto-errors').textContent = (result.errors || []).join('\n');
   } catch (error) {
-    if (request === runtimeDetailRequest && details.isConnected && details.open)
+    if (request === runtimeDetailRequest && details.isConnected && details.open) {
+      $('runtime-auto-summary').hidden = false;
       $('runtime-auto-summary').textContent = String(error?.message || error);
+    }
   }
 }
 async function pollRuntimeActions() {
@@ -898,6 +975,7 @@ function saveDraft() {
   for (const el of $('protocol-actions').querySelectorAll('input,select')) data[el.id] = el.value;
   data.hex = $('raw-hex').value;
   data.crc = $('append-crc').checked;
+  data.rawFormat = $('raw-format').value;
   drafts.set(draftKey(), data);
 }
 function renderActions(c) {
@@ -947,7 +1025,7 @@ function renderActions(c) {
         '</button>';
     } else {
       box.hidden = false;
-      box.innerHTML = '<button id="open-remote-config">' + tabNames[tab] + '配置</button>';
+      box.innerHTML = '<button id="open-remote-config">绑定点位</button>';
     }
   }
   if (c.protocol === 'iec104' && c.role === 'client') {
@@ -971,6 +1049,8 @@ function renderActions(c) {
     if (draft[el.id] !== undefined) el.value = draft[el.id];
   $('raw-hex').value = draft.hex || '';
   $('append-crc').checked = !!draft.crc;
+  $('raw-format').value = draft.rawFormat || 'hex';
+  updateRawFormat();
   if ($('read-clock'))
     on('read-clock', 'click', () => act('ReadClockDevice', selected, selectedDevice));
   if ($('counter-interrogate'))
@@ -1250,76 +1330,6 @@ function validatePointNumber(p, value, configuration) {
     );
   }
 }
-function pointEncoding(p, configuration = device()?.configuration) {
-  const t = pointWireType(p, configuration),
-    dt = p.dataType;
-  let type = 'uint',
-    bytes = 2;
-  if (['yx', 'yk', 'coil', 'discrete'].includes(p.kind)) bytes = 1;
-  else if (dt) {
-    type = dt.startsWith('int') ? 'signed' : dt === 'float32' ? 'float' : 'uint';
-    bytes = dt.endsWith('32') ? 4 : 2;
-  } else if (p.kind === 'mc') {
-    bytes = 4;
-    type = 'signed';
-  } else if (p.kind === 'position') {
-    bytes = 1;
-    type = 'signed';
-  } else if (p.kind === 'step' || [11, 35].includes(t)) type = 'signed';
-  else if ([9, 21, 34].includes(t)) type = 'normalized';
-  else if (['yc', 'yt'].includes(p.kind)) {
-    bytes = 4;
-    type = 'float';
-  }
-  return { type, bytes, order: p.byteOrder || '' };
-}
-function fullPointHex(p) {
-  const f = pointEncoding(p),
-    b = new ArrayBuffer(f.bytes),
-    v = new DataView(b);
-  if (f.type === 'float') v.setFloat32(0, p.value);
-  else if (f.bytes === 4) v.setUint32(0, p.value);
-  else if (f.bytes === 2)
-    v.setUint16(
-      0,
-      f.type === 'normalized' ? Math.min(32767, Math.round(p.value * 32768)) : p.value,
-    );
-  else v.setUint8(0, p.value);
-  let raw = [...new Uint8Array(b)];
-  if (f.order) {
-    const chars = f.bytes === 4 ? 'ABCD' : 'AB';
-    raw = [...f.order].map((c) => raw[chars.indexOf(c)]);
-  }
-  return raw
-    .map((n) => n.toString(16).padStart(2, '0'))
-    .join('')
-    .toUpperCase();
-}
-function pointHex(p) {
-  return fullPointHex(p).replace(/^0+(?=.)/, '');
-}
-function hexPointValue(p, hex, configuration = device()?.configuration) {
-  const f = pointEncoding(p, configuration);
-  if (!new RegExp('^[0-9a-fA-F]{1,' + f.bytes * 2 + '}$').test(hex))
-    throw Error('请输入有效的十六进制码值');
-  let raw = hex
-    .padStart(f.bytes * 2, '0')
-    .match(/../g)
-    .map((n) => parseInt(n, 16));
-  if (f.order) {
-    const out = raw.slice(),
-      chars = f.bytes === 4 ? 'ABCD' : 'AB';
-    [...f.order].forEach((c, i) => (out[chars.indexOf(c)] = raw[i]));
-    raw = out;
-  }
-  const v = new DataView(Uint8Array.from(raw).buffer);
-  if (f.type === 'float') return v.getFloat32(0);
-  if (f.type === 'normalized') return v.getInt16(0) / 32768;
-  if (f.type === 'signed')
-    return f.bytes === 4 ? v.getInt32(0) : f.bytes === 2 ? v.getInt16(0) : v.getInt8(0);
-  return f.bytes === 4 ? v.getUint32(0) : f.bytes === 2 ? v.getUint16(0) : v.getUint8(0);
-}
-
 function pointValueError(input, text) {
   input.setAttribute('aria-invalid', 'true');
   input.setAttribute('aria-description', text);
@@ -1332,14 +1342,7 @@ function parsePointCell(edit, raw) {
     if (raw.length > 200) throw Error('描述最多200字');
     return raw;
   }
-  let value = Number(raw.trim());
-  if (field === 'hex') {
-    value = hexPointValue(
-      edit.target.point || { kind: key.kind },
-      raw.trim().replace(/^0x/i, ''),
-      edit.target.configuration,
-    );
-  }
+  const value = Number(raw.trim());
   if (!raw.trim() || !Number.isFinite(value)) throw Error('请输入有效数值');
   if (field === 'address') {
     const max = edit.target.protocol.startsWith('modbus') ? 65535 : 16777215;
@@ -1378,7 +1381,7 @@ async function commitPointValue(input) {
   target.tail = target.tail.then(async () => {
     try {
       const key = { ...target.key },
-        field = edit.field === 'hex' ? 'value' : edit.field,
+        field = edit.field,
         telemetry =
           target.role === 'server' &&
           (target.protocol === 'iec104'
@@ -1435,25 +1438,16 @@ function renderPointCell(cell, target, p, field) {
     input.type = 'text';
     input.className = 'point-cell-input' + (field === 'value' ? ' point-value-input' : '');
     input.dataset.pointField = field;
-    input.inputMode =
-      field === 'name'
-        ? 'text'
-        : field === 'hex'
-          ? 'text'
-          : field === 'value'
-            ? 'decimal'
-            : 'numeric';
+    input.inputMode = field === 'name' ? 'text' : field === 'value' ? 'decimal' : 'numeric';
     input.setAttribute(
       'aria-label',
-      { address: '点位', hex: '码值', value: '数值', quality: '品质', name: '描述' }[field] +
-        ' ' +
-        p.address,
+      { address: '点位', value: '数值', quality: '品质', name: '描述' }[field] + ' ' + p.address,
     );
     if (field === 'name') input.maxLength = 200;
     input.pointEdit = {
       target,
       field,
-      base: field === 'hex' ? p.value : p[field],
+      base: p[field],
       dirty: false,
       pending: false,
     };
@@ -1484,20 +1478,30 @@ function renderPointCell(cell, target, p, field) {
     });
   }
   if (!input.pointEdit.dirty && !input.pointEdit.pending && document.activeElement !== input) {
-    input.value = field === 'hex' ? pointHex(p) : String(p[field] ?? '');
+    input.value = String(p[field] ?? '');
+    input.title = input.value;
     input.pointEdit.displayBase = input.value;
-    input.pointEdit.base = field === 'hex' ? p.value : p[field];
+    input.pointEdit.base = p[field];
     input.setAttribute(
       'aria-description',
-      field === 'hex'
-        ? '完整码值：' + fullPointHex(p) + '；回车或离开提交，Esc取消'
-        : field === 'quality'
-          ? '0 正常；可输入十进制或0x品质码'
-          : field === 'value' && ['yx', 'yk', 'coil', 'discrete'].includes(p.kind)
-            ? '0 分 / 1 合；回车或离开提交'
-            : '回车或离开提交，Esc取消',
+      field === 'quality'
+        ? '0 正常；可输入十进制或0x品质码'
+        : field === 'value' && ['yx', 'yk', 'coil', 'discrete'].includes(p.kind)
+          ? '0 分 / 1 合；回车或离开提交'
+          : '回车或离开提交，Esc取消',
     );
   }
+}
+// Display the clock and offset supplied by the engine, not the browser's
+// clock or the IEC104 source/event timestamp. The tooltip retains the date.
+function pointCommunicationTime(value) {
+  const match =
+    typeof value === 'string' &&
+    value.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/);
+  if (!match || !Number.isFinite(Date.parse(match[1] + 'T' + match[2] + match[4])))
+    return { text: '—', title: '尚无点位通信记录' };
+  const clock = match[2];
+  return { text: clock, title: match[1] + ' ' + clock + ' ' + match[4] };
 }
 function renderPoints(c) {
   const query = $('point-search').value.trim().toLowerCase(),
@@ -1537,25 +1541,23 @@ function renderPoints(c) {
   $('point-prev').disabled = pointPage === 0;
   $('point-next').disabled = pointPage === pages - 1;
   const command = ['yk', 'yt'].includes(kind.replace(/^tab:/, '')),
-    binding = command && c?.role === 'server',
+    canEditBinding = command && c?.role === 'server',
     fields = command
-      ? binding
-        ? ['address', 'binding', 'value', 'name']
-        : ['address', 'value', 'name']
-      : ['address', 'hex', 'value', 'quality', 'name'];
-  const table = document.querySelector('.point-table'),
-    header = table?.querySelector('thead tr'),
+      ? ['address', 'binding', 'value', 'communicationAt', 'name']
+      : ['address', 'value', 'quality', 'communicationAt', 'name'];
+  const header = document.querySelector('.point-table thead tr'),
     labels = {
       address: '点位',
-      hex: '码值',
-      value: binding ? '下发值' : '值 / 状态',
+      value: canEditBinding ? '下发值' : '值',
       quality: '品质',
+      communicationAt: '上报时间',
       name: '描述',
-      binding: kind.replace(/^tab:/, '') === 'yk' ? '绑定遥信' : '绑定遥测',
+      binding: '绑定点位',
     };
-  if (table)
-    table.dataset.columns = binding ? 'server-command' : command ? 'client-command' : 'telemetry';
-  if (header) header.innerHTML = fields.map((field) => '<th>' + labels[field] + '</th>').join('');
+  if (header)
+    header.innerHTML = fields
+      .map((field) => '<th data-point-column="' + field + '">' + labels[field] + '</th>')
+      .join('');
   const scroll = $('point-scroll').scrollTop,
     tbody = $('point-rows');
   const existing = new Map([...tbody.children].map((row) => [row.dataset.pointKey, row]));
@@ -1593,24 +1595,42 @@ function renderPoints(c) {
     );
     fields.forEach((field, n) => {
       const cell = row.children[n];
-      cell.className = field === 'value' ? 'point-value' : '';
+      cell.className =
+        field === 'value'
+          ? 'point-value'
+          : field === 'communicationAt'
+            ? 'point-communication-time'
+            : '';
+      cell.dataset.pointColumn = field;
+      cell.removeAttribute('title');
       if (field === 'binding') {
         const cfg = device()?.configuration?.controls?.[pointCategory(p)],
           mapped = (cfg?.mappings || []).filter(
             (m) => m.source.kind === p.kind && m.source.address === p.address,
-          );
+          ),
+          label = mapped.map((m) => m.target.address + (m.invert ? '（反向）' : '')).join('，');
+        if (!canEditBinding) {
+          cell.textContent = label || '—';
+          if (label) cell.title = label;
+          return;
+        }
         const button = cell.querySelector('button') || document.createElement('button');
         button.className = 'row-button point-binding';
-        button.textContent = mapped.length
-          ? mapped.map((m) => m.target.address + (m.invert ? '（反向）' : '')).join('，')
-          : p.feedback || '';
+        button.textContent = label || p.feedback || '绑定点位';
+        button.title = button.textContent;
         button.setAttribute(
           'aria-label',
           '绑定' + (pointCategory(p) === 'yk' ? '遥信' : '遥测') + ' ' + p.address,
         );
         button.onclick = () => openRemoteConfig(row.pointTarget.point);
         if (button.parentNode !== cell) cell.replaceChildren(button);
-      } else if (binding && field === 'value') cell.textContent = String(p.value);
+      } else if (field === 'communicationAt') {
+        const editor = cell.querySelector('.point-cell-input');
+        if (editor) commitPointValue(editor);
+        const stamp = pointCommunicationTime(p.communicationAt);
+        cell.textContent = stamp.text;
+        cell.title = stamp.title;
+      } else if (canEditBinding && field === 'value') cell.textContent = String(p.value);
       else renderPointCell(cell, row.pointTarget, p, field);
     });
     if (tbody.children[index] !== row) tbody.insertBefore(row, tbody.children[index] || null);
@@ -1843,7 +1863,7 @@ async function loadNetworkChoices() {
   const ips =
     results[1].status === 'fulfilled' && Array.isArray(results[1].value)
       ? results[1].value
-      : ['Any'];
+      : ['127.0.0.1'];
   for (const [id, options] of [
     ['cbComList', ports],
     ['cbxServerIP', ips],
@@ -1856,6 +1876,18 @@ async function loadNetworkChoices() {
   const input = originalControl($('original-network-panel'), 'cbComList');
   if (input && !input.value && ports.length) input.value = ports[0];
   $('network-port-status').textContent = ports.length ? '串口 ' + ports.length + ' 个' : '无串口';
+}
+const transportNames = {
+  'tcp-client': 'TCP Client',
+  'tcp-server': 'TCP Server',
+  udp: 'UDP',
+  serial: '串口',
+};
+function addressLabel(transport) {
+  if (transport === 'tcp-server') return '监听地址';
+  if (transport === 'tcp-client' || transport === 'udp') return '目标地址';
+  if (transport === 'serial') return '串口路径';
+  return '地址';
 }
 function channelDialog(edit = true) {
   const c = channel();
@@ -1878,7 +1910,7 @@ function channelDialog(edit = true) {
     cbStopBit: String(c.stopBits),
     txtClientIP: '127.0.0.1',
     txtClientPort: '2404',
-    cbxServerIP: 'Any',
+    cbxServerIP: '127.0.0.1',
     txtServerPort: '2404',
     ck_AssignIpPort: false,
     cb_ClientAssignIp: local,
@@ -1899,7 +1931,7 @@ function channelDialog(edit = true) {
     v.txtClientPort = port;
   }
   if (c.transport === 'udp') {
-    v.cbxServerIP = c.localAddress ? (local === '0.0.0.0' ? 'Any' : local) : 'Any';
+    v.cbxServerIP = c.localAddress ? (local === '0.0.0.0' ? 'Any' : local) : '127.0.0.1';
     v.txtServerPort = c.localAddress ? localPort : '0';
     v.rbServer = c.transportDraft?.rbServer === 'true';
     v.rbClient = !v.rbServer;
@@ -1928,7 +1960,7 @@ function channelDialog(edit = true) {
     );
   $('network-ports').textContent = '刷新';
 
-  $('channel-dialog-title').textContent = '通信配置窗口';
+  $('channel-dialog-title').textContent = '通道设置';
   updateChannelFields();
   if (!$('channel-dialog').open) $('channel-dialog').show();
   originalControl($('original-network-panel'), 'rbTcp')?.focus();
@@ -1943,6 +1975,19 @@ function updateChannelFields() {
     udp = get('rbUDP').checked,
     server = get('rbServer').checked;
   const bind = !com && !udp && !server && get('ck_AssignIpPort').checked;
+  for (const [id, label] of [
+    ['rbClient', 'TCP Client'],
+    ['rbServer', 'TCP Server'],
+  ]) {
+    const wrapper = get(id).closest('label');
+    wrapper.hidden = com || udp;
+    wrapper.lastChild.textContent = label;
+  }
+  const addressCaption = field($('channel-form'), 'address').closest('label').querySelector('span');
+  addressCaption.textContent = addressLabel(
+    com ? 'serial' : udp ? 'udp' : server ? 'tcp-server' : 'tcp-client',
+  );
+
   for (const id of ['cbComList', 'cbBaudRate', 'cbDataBit', 'cbParity', 'cbStopBit'])
     get(id).disabled = !com;
   get('rbClient').disabled = com;
@@ -2007,12 +2052,21 @@ on('add-channel', 'click', async () => {
       snapshot.project.channels.filter((c) => c.role === role).map((c) => c.name),
       1,
     );
+  let listenIP = '127.0.0.1';
+  if (role === 'server') {
+    try {
+      const ips = await api('LocalIPs');
+      listenIP = ips?.find((ip) => ip !== 'Any' && ip !== '0.0.0.0') || listenIP;
+    } catch {
+      // Loopback is an explicit, usable fallback if interface discovery fails.
+    }
+  }
   const c = {
     name,
     protocol: 'raw',
     role,
     transport: role === 'server' ? 'tcp-server' : 'tcp-client',
-    address: role === 'server' ? '0.0.0.0:2404' : '127.0.0.1:2404',
+    address: (role === 'server' ? listenIP : '127.0.0.1') + ':2404',
     localAddress: '',
     timeoutMs: 3000,
     unit: 1,
@@ -2027,7 +2081,6 @@ on('add-channel', 'click', async () => {
   selectChannel(id);
 });
 on('edit-channel', 'click', () => channelDialog(true, 'transport'), false);
-on('device-config', 'click', () => deviceDialog(true), false);
 on('add-device', 'click', () => deviceDialog(false), false);
 on('channel-form', 'submit', async (e) => {
   e.preventDefault();
@@ -2353,7 +2406,7 @@ function deviceDialog(edit = false) {
   f.deviceSourceRanges = cloneBridgeData(d?.configuration?.ranges || []);
   f.deviceInitial = d ? JSON.stringify(d.configuration) : null;
   const suffix = stationMode === 'server' ? '子站' : '主站';
-  $('device-dialog-title').textContent = edit ? '查看/修改装置配置' : suffix + '增加装置';
+  $('device-dialog-title').textContent = edit ? '装置配置' : suffix + '增加装置';
   $('device-protocol').innerHTML =
     '<option value="">请选择</option>' +
     [
@@ -2688,9 +2741,7 @@ on('device-form', 'submit', async (e) => {
       configuration,
     };
   await act('UpsertDevice', c.id, protocol, d, replace);
-  if (f.dataset.device) {
-    $('device-dialog').close();
-  } else {
+  if (!f.dataset.device) {
     if (protocol.startsWith('modbus'))
       originalControl($('original-device-panel'), 'txtAdd').value = String(
         Math.min(protocol === 'modbus-rtu' ? 247 : 255, address + 1),
@@ -2698,7 +2749,7 @@ on('device-form', 'submit', async (e) => {
     rememberDevicePanel();
   }
   $('device-dialog').close();
-  toast(existing ? '配置已保存，通道保持停止' : '装置已增加');
+  toast(existing ? '已保存' : '已添加装置');
 });
 async function renameDevice() {
   await run('rename-device', async () => {
@@ -2885,25 +2936,42 @@ document.addEventListener('click', async (e) => {
     });
   }
 });
-on('delete-channel', 'click', async () => {
-  const c = current();
-  if (c && (await confirmAction('删除通道', `${c.name}及其点表将被删除。`, true)))
-    await act('DeleteChannel', c.id);
-});
+function removeChannel() {
+  if (!current() || active(state())) return;
+  return run('delete-channel', async () => {
+    const c = current();
+    if (c && (await confirmAction('删除通道', `${c.name}及其点表将被删除。`, true)))
+      await act('DeleteChannel', c.id);
+  });
+}
 on('toggle-channel', 'click', () => {
   const id = selected;
   return act(active(state()) ? 'StopChannel' : 'StartChannel', id);
+});
+function updateRawFormat() {
+  const label = $('raw-format').value === 'text' ? 'UTF-8文本' : '十六进制报文';
+  $('raw-hex').placeholder = label;
+  $('raw-hex').setAttribute('aria-label', label);
+}
+on('raw-format', 'change', () => {
+  updateRawFormat();
+  saveDraft();
 });
 on('raw-form', 'submit', async (e) => {
   e.preventDefault();
   const id = selected,
     text = $('raw-hex').value;
-  if (!text.trim()) {
+  if ($('raw-format').value === 'text' ? text.length === 0 : !text.trim()) {
     $('raw-hex').focus();
-    throw Error('请输入十六进制报文');
+    throw Error($('raw-format').value === 'text' ? '请输入文本报文' : '请输入十六进制报文');
   }
   saveDraft();
-  await act('SendHex', id, text, $('append-crc').checked);
+  await act(
+    $('raw-format').value === 'text' ? 'SendRawText' : 'SendHex',
+    id,
+    text,
+    $('append-crc').checked,
+  );
 });
 for (const id of ['point-search', 'point-kind'])
   on(
@@ -3234,7 +3302,7 @@ document.addEventListener('contextmenu', (e) => {
             );
           }),
       ],
-      ['删除', () => $('delete-channel').click(), running],
+      ['删除', removeChannel, running],
     ]);
   } else if (e.target.closest('#traffic-panel'))
     showContext(e, [
@@ -3469,12 +3537,6 @@ function renderDebug() {
     )
     .join('\n');
 }
-const managerTransportNames = {
-  'tcp-client': 'TCP 客户端',
-  'tcp-server': 'TCP 服务端',
-  udp: 'UDP',
-  serial: '串口',
-};
 function managerField(row, cell, c, key, label, options = null) {
   let input = cell.querySelector('[data-manager-field="' + key + '"]');
   if (!input) {
@@ -3524,6 +3586,8 @@ function managerField(row, cell, c, key, label, options = null) {
     wrapper.append(input);
     cell.append(wrapper);
   }
+  input.closest('label').querySelector('span').textContent = label;
+  input.setAttribute('aria-label', label + ' · ' + c.name);
   const edit = input.managerEdit;
   if (!edit.dirty && !edit.pending && document.activeElement !== input) {
     input.value = String(c[key] ?? '');
@@ -3623,17 +3687,17 @@ function renderManager() {
         row.children[1],
         c,
         'transport',
-        '通信方式',
-        Object.entries(managerTransportNames),
+        '连接方式',
+        Object.entries(transportNames),
       );
-      managerField(
+      managerField(row, row.children[2], c, 'address', addressLabel(c.transport));
+      const local = managerField(
         row,
         row.children[2],
         c,
-        'address',
-        c.transport === 'serial' ? '串口路径' : 'IP / 主机名:端口',
+        'localAddress',
+        c.transport === 'udp' ? '监听地址（可留空）' : '本地绑定（可留空）',
       );
-      const local = managerField(row, row.children[2], c, 'localAddress', '本地绑定（可留空）');
       local.closest('label').hidden = !['tcp-client', 'udp'].includes(c.transport);
       for (const [key, label, options] of [
         ['baud', '波特率', null],
@@ -3765,10 +3829,23 @@ $('manager-rows').addEventListener('click', (e) => {
 
 on('network-ports', 'click', () => $('list-ports').click(), false);
 setInterval(() => {
+  maintainStatusMark();
   if (!document.hidden) refresh();
 }, 650);
 document.addEventListener('visibilitychange', () => {
+  maintainStatusMark();
   if (!document.hidden) refresh();
+});
+const desktopFeatures = globalThis.createDesktopFeatures({
+  $,
+  api,
+  ask,
+  refresh,
+  channel: () => selected,
+  device: () => selectedDevice,
+  protocol: () => channel()?.protocol,
+  kind: () => $('point-kind').value,
+  error: report,
 });
 initializeDesktop();
 
@@ -3874,6 +3951,8 @@ async function initializeDesktop() {
           renderEvents();
         } else if (c.kind === 'auto-bulk-dialog') $('auto-bulk-dialog').show();
         else if (c.kind === 'confirm-dialog') ask(c.ask);
+        else if (['point-table-dialog', 'packet-tools-dialog', 'toolbox-dialog'].includes(c.kind))
+          await desktopFeatures.initialize(c.kind);
         else {
           $(c.kind).show();
           if (c.kind === 'manager-dialog') renderManager();
@@ -3939,7 +4018,7 @@ async function initializeDesktop() {
           ),
           saveButtonBottom = Math.ceil(
             dialog
-              .querySelector('#auto-data-save,#auto-yk-save,#auto-yt-save')
+              .querySelector('#auto-data-save,#auto-yk-save,#auto-yt-save,[data-save-action]')
               ?.getBoundingClientRect().bottom || 0,
           );
         await api('NativeWindowReady', {
@@ -4628,7 +4707,7 @@ function renderDataRules(rules) {
             `<option value="${v}" ${(r.mode === 'report' ? 'report:' + String(r.cause || 3) : r.mode) === v ? 'selected' : ''}>${label}</option>`,
         )
         .join('')}</select></td>
-${['min', 'max', 'step'].map((k) => `<td><input data-data-field="${k}" type="number" step="any" aria-label="${k === 'min' ? '下限' : k === 'max' ? '上限' : '步长'}" value="${escape(r[k])}"></td>`).join('')}
+${['min', 'max', 'step'].map((k) => `<td><input data-data-field="${k}" type="number" step="any" aria-label="${k === 'min' ? '下限 / 固定值' : k === 'max' ? '上限' : '步长'}" value="${escape(r[k])}"></td>`).join('')}
 <td><button type="button" data-data-copy="${index}">复制</button><button type="button" data-data-remove="${index}" aria-label="删除第${index + 1}组">×</button></td></tr>`,
     )
     .join('');

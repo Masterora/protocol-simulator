@@ -518,3 +518,6 @@ func (p *peer) controlRequest104(d Device, a []byte) error {
 	}
 	return nil
 }
+
+// Decode104Control decodes a standard-width command ASDU without sending it.
+func Decode104Control(asdu []byte) (Control104Request, error) { return decodeControl104(asdu) }

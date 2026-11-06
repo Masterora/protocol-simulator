@@ -130,7 +130,10 @@ func TestComprehensiveReportingRecoverySoak(t *testing.T) {
 		}
 		d, _ := e.Device(s.ID, id)
 		for _, p := range d.Points {
-			if !reflect.DeepEqual(model[PointKey{p.Kind, p.Address}], p) {
+			observed := model[PointKey{p.Kind, p.Address}]
+			// Device returns editable data; View adds runtime-only communication metadata.
+			observed.CommunicationAt = ""
+			if !reflect.DeepEqual(observed, p) {
 				t.Fatal("incremental view lost live data", p, model)
 			}
 		}

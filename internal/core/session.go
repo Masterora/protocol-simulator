@@ -323,6 +323,11 @@ func (p *peer) writeLocked(b []byte, summary string) error {
 		p.ackSince = time.Time{}
 	}
 	p.s.e.log(p.s.cfg.ID, p.address, "TX", b, summary)
+	if p.s.cfg.Protocol == "iec104" && len(b) >= 12 && b[0] == 0x68 && int(b[1])+2 == len(b) && b[2]&1 == 0 {
+		if canonical, err := p.canonicalASDU(b[6:]); err == nil {
+			p.record104Communication(canonical)
+		}
+	}
 	return nil
 }
 func (p *peer) readLoop() {
@@ -408,6 +413,8 @@ func (p *peer) readLoop() {
 		p.mu.Unlock()
 		p.s.e.log(p.s.cfg.ID, p.address, "RX", b, describe(p.s.cfg.Protocol, b))
 		switch p.s.cfg.Protocol {
+		case "raw":
+			p.s.dispatchRaw(p, b)
 		case "modbus-tcp", "modbus-rtu":
 			err = p.handleModbus(b)
 		case "iec104":
@@ -483,7 +490,11 @@ func (s *session) requestDeviceModbusMode(d Device, pdu []byte, purpose string) 
 			tid = 0
 			b = encodeDeviceRTU(d.Unit, pdu, d)
 			if d.Unit == 0 {
-				return p.writeLocked(b, "RTU 广播写入（不等待应答）")
+				err := p.writeLocked(b, "RTU 广播写入（不等待应答）")
+				if err == nil {
+					p.recordModbusCommunication(d.ID, pdu)
+				}
+				return err
 			}
 		}
 		timeout := time.Duration(s.cfg.TimeoutMS) * time.Millisecond
@@ -494,6 +505,9 @@ func (s *session) requestDeviceModbusMode(d Device, pdu []byte, purpose string) 
 		if err := p.writeLocked(b, "Modbus 请求 · "+d.Name); err != nil {
 			delete(p.pending, tid)
 			return err
+		}
+		if pdu[0] > 4 {
+			p.recordModbusCommunication(d.ID, pdu)
 		}
 		return nil
 	})
@@ -528,6 +542,7 @@ func (p *peer) handleModbus(b []byte) error {
 				updates = nil
 			}
 			if len(updates) > 0 {
+				p.recordModbusCommunication(d.ID, pdu)
 				category := controlCategory(dataPointCategory(s.cfg.Protocol, updates[0]))
 				if category != "yk" && category != "yt" {
 					category = "yt"
@@ -569,6 +584,9 @@ func (p *peer) handleModbus(b []byte) error {
 			p.mu.Lock()
 			err := p.writeLocked(out, "Modbus 子站应答 · "+d.Name)
 			p.mu.Unlock()
+			if err == nil && len(reply) > 0 && reply[0]&0x80 == 0 {
+				p.recordModbusCommunication(d.ID, pdu)
+			}
 			return err
 		}
 		return nil
@@ -624,6 +642,7 @@ func (p *peer) handleModbus(b []byte) error {
 		} else {
 			p.recordModbusChanges(d, mapped)
 			s.e.applyDevicePoints(s.cfg.ID, d.ID, mapped)
+			p.recordModbusCommunication(d.ID, request.pdu)
 		}
 	}
 	return nil
@@ -764,7 +783,11 @@ func (p *peer) handle104(b []byte) error {
 	if err != nil {
 		return err
 	}
-	return p.handleASDU(canonical, false)
+	err = p.handleASDU(canonical, false)
+	if err == nil {
+		p.record104Communication(canonical)
+	}
+	return err
 }
 func (p *peer) handleASDU(a []byte, delayed bool) error {
 	s := p.s

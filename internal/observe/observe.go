@@ -28,24 +28,32 @@ type Log struct {
 	Fields   string    `json:"fields"`
 }
 type Info struct {
-	PointOperations bool            `json:"pointOperations,omitempty"`
-	PID             int             `json:"pid"`
-	Started         time.Time       `json:"started"`
-	View            core.Inspection `json:"view"`
-	Logs            []Log           `json:"logs,omitempty"`
-	LogSequence     uint64          `json:"logSequence"`
-	LogMissed       uint64          `json:"logMissed"`
+	RuleItemOperations      bool            `json:"ruleItemOperations,omitempty"`
+	RuleOperations          bool            `json:"ruleOperations,omitempty"`
+	DeletionOperations      bool            `json:"deletionOperations"`
+	ConfigurationOperations bool            `json:"configurationOperations,omitempty"`
+	ConfigurationRevision   string          `json:"configurationRevision,omitempty"`
+	PointOperations         bool            `json:"pointOperations,omitempty"`
+	PID                     int             `json:"pid"`
+	Started                 time.Time       `json:"started"`
+	View                    core.Inspection `json:"view"`
+	Logs                    []Log           `json:"logs,omitempty"`
+	LogSequence             uint64          `json:"logSequence"`
 }
 type Server struct {
-	operationLogger func(string, ...any)
-	engine          *core.Engine
-	mu              sync.Mutex
-	logs            []Log
-	sequence        uint64
-	started         time.Time
-	socket          string
-	listener        net.Listener
-	http            *http.Server
+	ruleHandler           RuleHandler
+	configurationHandler  ConfigurationHandler
+	pointHandler          PointHandler
+	configurationRevision func() string
+	operationLogger       func(string, ...any)
+	engine                *core.Engine
+	mu                    sync.Mutex
+	logs                  []Log
+	sequence              uint64
+	started               time.Time
+	socket                string
+	listener              net.Listener
+	http                  *http.Server
 }
 
 func RuntimeDir() string {
@@ -115,6 +123,14 @@ func (s *Server) Log(level, message string, fields ...any) {
 	}
 }
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/v1/configuration" {
+		s.configuration(w, r)
+		return
+	}
+	if r.URL.Path == "/v1/rules" {
+		s.operateRules(w, r)
+		return
+	}
 	if r.URL.Path == "/v1/point" {
 		s.operatePoint(w, r)
 		return
@@ -139,7 +155,15 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/v1/view" {
 		request = core.InspectRequest{Channel: q.Get("channel"), Device: q.Get("device"), Filter: filter, Offset: offset, Kind: q.Get("kind"), Order: q.Get("order"), After: after, Messages: true}
 	}
-	result := Info{PointOperations: true, PID: os.Getpid(), Started: s.started, View: s.engine.Inspect(request)}
+	result := Info{RuleItemOperations: true, RuleOperations: true, PointOperations: true, PID: os.Getpid(), Started: s.started, View: s.engine.Inspect(request)}
+	s.mu.Lock()
+	configHandler, revision := s.configurationHandler, s.configurationRevision
+	s.mu.Unlock()
+	result.ConfigurationOperations = configHandler != nil
+	result.DeletionOperations = configHandler != nil
+	if revision != nil {
+		result.ConfigurationRevision = revision()
+	}
 	if r.URL.Path == "/v1/view" {
 		logAfter, _ := strconv.ParseUint(q.Get("logAfter"), 10, 64)
 		s.mu.Lock()
@@ -148,9 +172,6 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			entry := s.logs[i]
 			if entry.Sequence <= logAfter {
 				continue
-			}
-			if len(result.Logs) == 0 && logAfter > 0 && entry.Sequence > logAfter+1 {
-				result.LogMissed = entry.Sequence - logAfter - 1
 			}
 			result.Logs = append(result.Logs, entry)
 		}
@@ -236,3 +257,5 @@ func Discover(dir string) ([]string, error) {
 	}
 	return sockets, nil
 }
+
+func (s *Server) Shutdown(ctx context.Context) error { return s.http.Shutdown(ctx) }

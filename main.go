@@ -18,7 +18,11 @@ import (
 var assets embed.FS
 
 func main() {
-	web, err := fs.Sub(assets, "frontend")
+	embedded, err := fs.Sub(assets, "frontend")
+	if err != nil {
+		log.Fatal(err)
+	}
+	web, err := developmentAssets(embedded)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -54,6 +58,9 @@ func main() {
 		width, height = 430, 760
 		minWidth, minHeight = 380, 300
 		switch c.Kind {
+		case "point-table-dialog", "packet-tools-dialog", "toolbox-dialog":
+			width, height = 1000, 680
+			minWidth, minHeight = 760, 460
 		case "telemetry-values-dialog":
 			width, height = 540, 390
 			minWidth, minHeight = 500, 350

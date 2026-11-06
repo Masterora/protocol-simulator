@@ -10,12 +10,7 @@
   <body>
     <header class="replica-ribbon"
       ><div class="ribbon-title"
-        ><button
-          id="new-project"
-          class="quick-button"
-          aria-label="新建工程"
-          aria-description="新建工程"
-          title="新建工程"
+        ><button id="new-project" class="quick-button" aria-label="新建工程" title="新建工程"
           >新建</button
         ><button id="save-as" class="quick-button" aria-description="另存为">另存为</button
         ><div class="mode-switch"
@@ -62,6 +57,10 @@
                   d="M28 14a11 11 0 0 0-19-5L5 13M5 6v7h7M6 22a11 11 0 0 0 19 5l4-4M22 23h7v7"
                 ></path></svg
               ><span>更新</span></button
+            ><button id="open-toolbox" class="ribbon-button"
+              ><svg viewBox="0 0 34 36" aria-hidden="true">
+                <path d="M4 12h26v19H4zM11 12V6h12v6M4 20h26M15 18h4v5h-4z"></path></svg
+              ><span>工具箱</span></button
             ></div
           ></div
         ></div
@@ -75,7 +74,6 @@
             ><button
               id="add-channel"
               class="dock-add creation-button"
-              aria-description="新增通道"
               aria-label="新增通道"
               title="新增通道"
               ><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
@@ -98,7 +96,6 @@
             ><button
               id="add-device"
               class="dock-add creation-button"
-              aria-description="新增装置"
               aria-label="新增装置"
               title="新增装置"
               ><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
@@ -132,6 +129,7 @@
                   ><option value="discrete">离散量</option
                   ><option value="holding">保持寄存器</option
                   ><option value="input">输入寄存器</option></select
+                ><button id="open-point-table" type="button">点表导入导出</button
                 ><label for="point-search" class="point-search-label">搜索</label
                 ><input
                   id="point-search"
@@ -145,7 +143,7 @@
               ><table class="point-table"
                 ><thead
                   ><tr
-                    ><th>点位</th><th>码值</th><th>值 / 状态</th><th>品质</th><th>描述</th></tr
+                    ><th>点位</th><th>值</th><th>品质</th><th>上报时间</th><th>描述</th></tr
                   ></thead
                 ><tbody id="point-rows"></tbody></table
               ><div id="point-empty" class="empty-state">暂无数据</div></div
@@ -170,6 +168,7 @@
               ><div class="panel-title"
                 ><span class="panel-mark">⌁</span><h2>报文窗口</h2
                 ><span id="message-badge" class="badge">0</span></div
+              ><button id="open-packet-tools" type="button">自动化</button
               ><button
                 id="pause-messages"
                 type="button"
@@ -207,7 +206,11 @@
                 ><tbody id="message-rows"></tbody></table
               ><div id="message-empty" class="message-empty">暂无报文</div></div
             ><form id="raw-form" class="raw-send"
-              ><span class="raw-label">HEX</span
+              ><label class="raw-label"
+                ><select id="raw-format" aria-label="发送格式"
+                  ><option value="hex">HEX</option
+                  ><option value="text">UTF-8文本</option></select
+                ></label
               ><input
                 id="raw-hex"
                 placeholder="十六进制报文"
@@ -240,14 +243,8 @@
         ><span>TX <b id="tx-count">0 B</b></span
         ><span>RX <b id="rx-count">0 B</b></span
         ><span>连接 <b id="peer-count">0</b></span></span
-      ><span id="footer-detail" role="status"></span
-      ><span class="producer-credit"
-        >Produced by Der_Orange
-        <span class="producer-orange" aria-label="橙子" role="img">🍊</span></span
-      ></footer
-    ><button id="device-config" hidden="">查看/修改装置配置</button
-    ><button id="delete-channel" hidden="">移除选中通道</button>
-    <dialog id="channel-dialog"
+      ><span id="footer-detail" role="status"></span></footer
+    ><dialog id="channel-dialog"
       ><form id="channel-form"
         ><div class="dialog-heading"
           ><div><h2 id="channel-dialog-title">新增通道</h2></div
@@ -268,18 +265,19 @@
             ></label
           ><label
             >站点角色<select name="role"
-              ><option value="client">主站 / 客户端</option
-              ><option value="server">子站 / 服务端</option></select
+              ><option value="client">主站</option
+              ><option value="server">子站</option></select
             ></label
           ><label
-            >传输方式<select name="transport"
-              ><option value="tcp-client">TCP 客户端</option
-              ><option value="tcp-server">TCP 服务端</option
+            >连接方式<select name="transport"
+              ><option value="tcp-client">TCP Client</option
+              ><option value="tcp-server">TCP Server</option
               ><option value="udp">UDP</option
               ><option value="serial">串口</option></select
             ></label
           ><label
-            >目标 / 监听端点<input name="address" placeholder="127.0.0.1:2404" required="" /></label
+            ><span>目标地址</span
+            ><input name="address" placeholder="127.0.0.1:2404" required="" /></label
           ><label>本地绑定<input name="localAddress" placeholder="可选" /></label
           ><label
             >超时（毫秒）<input
@@ -628,7 +626,7 @@
         ><button id="toggle-all-channels" type="button">全部连接</button></div
       ><table
         ><thead
-          ><tr><th>通道</th><th>通信方式</th><th>端点</th><th>状态</th><th>操作</th></tr></thead
+          ><tr><th>通道</th><th>连接方式</th><th>地址</th><th>状态</th><th>操作</th></tr></thead
         ><tbody id="manager-rows"></tbody></table></dialog
     ><div id="toast" role="status" aria-live="polite"></div
     ><dialog id="auto-data-dialog"
@@ -654,8 +652,8 @@
             ><thead
               ><tr
                 ><th>启用</th><th>类型</th><th>点位</th><th>周期(ms)</th
-                ><th id="data-mode-caption">变化方式</th><th>下限</th><th>上限</th><th>步长</th
-                ><th></th></tr></thead
+                ><th id="data-mode-caption">变化方式</th><th>下限 / 固定值</th><th>上限</th
+                ><th>步长</th><th></th></tr></thead
             ><tbody id="auto-data-rows"></tbody></table
         ></div>
         <div class="data-options"
@@ -686,6 +684,373 @@
               ><th>值</th><th>品质</th></tr
             ></thead
           ><tbody id="event-rows"></tbody></table></div></dialog
+    ><dialog id="point-table-dialog" class="desktop-feature-dialog"
+      ><section
+        ><div class="dialog-heading"
+          ><h2>点表导入导出</h2
+          ><button type="button" data-close="point-table-dialog" aria-label="关闭">×</button></div
+        ><p class="form-error" hidden></p
+        ><div class="feature-toolbar"
+          ><label
+            >点表文件<input
+              id="point-table-file"
+              type="file"
+              accept=".csv,.tsv,.txt,.json,.xlsx" /></label
+          ><label>缺省类型<select id="point-table-kind"></select></label
+          ><label
+            >导入方式<select id="point-table-mode"
+              ><option value="merge">合并，同地址覆盖</option
+              ><option value="replace-kind">替换所选类型</option
+              ><option value="replace-all">替换装置全部点表</option></select
+            ></label
+          ><button id="point-table-apply" type="button" disabled>确认导入</button></div
+        ><p class="feature-note"
+          >CSV/TSV需使用UTF-8；XLSX读取第一个工作表。导入前校验全部点位，导入后停止当前通道，请保存工程后手动重连。</p
+        ><p id="point-table-summary" role="status"></p
+        ><div class="feature-table-scroll"
+          ><table
+            ><thead
+              ><tr
+                ><th></th><th>类型</th><th>地址</th><th>数值</th><th>品质</th><th>描述</th></tr
+              ></thead
+            ><tbody id="point-table-preview"></tbody></table></div
+        ><div class="dialog-actions"
+          ><label
+            >导出范围<select id="point-table-export-scope"
+              ><option value="all">装置全部点位</option
+              ><option value="current">当前点位分类</option></select
+            ></label
+          ><label
+            >文件格式<select id="point-table-format"
+              ><option value="xlsx">Excel XLSX</option
+              ><option value="csv">CSV UTF-8</option
+              ><option value="tsv">TSV UTF-8</option
+              ><option value="json">JSON</option></select
+            ></label
+          ><button id="point-table-export" data-save-action type="button">导出点表</button></div
+        ></section
+      ></dialog
+    ><dialog id="packet-tools-dialog" class="desktop-feature-dialog"
+      ><section
+        ><div class="dialog-heading"
+          ><h2>报文自动化</h2
+          ><button type="button" data-close="packet-tools-dialog" aria-label="关闭">×</button></div
+        ><p class="form-error" hidden></p
+        ><div id="packet-editor"
+          ><div class="feature-toolbar"
+            ><label
+              >接收分帧<select id="packet-framing"
+                ><option value="idle">静默间隔</option
+                ><option value="fixed">固定长度</option
+                ><option value="delimiter">结束符</option
+                ><option value="chunk">接收块</option></select
+              ></label
+            ><label
+              >静默间隔(ms)<input
+                id="packet-idle"
+                type="number"
+                min="5"
+                max="5000"
+                value="30" /></label
+            ><label
+              >固定帧长(字节)<input
+                id="packet-length"
+                type="number"
+                min="1"
+                max="4096"
+                value="1" /></label
+            ><label>结束符(HEX)<input id="packet-delimiter" value="0D0A" /></label></div
+          ><div class="feature-heading"
+            ><h3>自动应答</h3
+            ><button id="packet-add-reply" type="button" aria-label="添加应答规则">＋</button></div
+          ><div class="feature-table-scroll packet-table"
+            ><table
+              ><thead
+                ><tr
+                  ><th></th><th>启用</th><th>识别起始字节</th><th>识别内容(HEX)</th><th>应答报文</th
+                  ><th>格式</th><th>追加校验</th><th>延迟(ms)</th><th>操作</th></tr
+                ></thead
+              ><tbody id="packet-replies"></tbody></table></div
+          ><div class="feature-heading"
+            ><h3>循环发送</h3
+            ><button id="packet-add-send" type="button" aria-label="添加发送报文">＋</button></div
+          ><div class="feature-table-scroll packet-table"
+            ><table
+              ><thead
+                ><tr
+                  ><th></th><th>启用</th><th>发送报文</th><th>格式</th><th>追加校验</th
+                  ><th>操作</th></tr
+                ></thead
+              ><tbody id="packet-sends"></tbody></table></div
+          ><div class="feature-toolbar"
+            ><label
+              >指定序号<input
+                id="packet-selection"
+                placeholder="留空发送全部启用行；如2,1,3-5" /></label
+            ><label
+              >报文间隔(ms)<input
+                id="packet-interval"
+                type="number"
+                min="10"
+                max="86400000"
+                value="1000" /></label
+            ><label
+              >循环周期(ms)<input
+                id="packet-cycle"
+                type="number"
+                min="0"
+                max="86400000"
+                value="0" /></label
+            ><label
+              >循环次数(0为持续)<input
+                id="packet-cycles"
+                type="number"
+                min="0"
+                max="1000000"
+                value="1" /></label></div></div
+        ><p class="feature-note"
+          >识别起始字节从0开始，首条匹配规则生效；UDP按数据报分帧。配置保存在工程中，任务需手动启动，关闭此窗口不会停止任务。</p
+        ><div class="feature-task-status"
+          ><button id="packet-reply-toggle" type="button">启动</button><span>自动应答</span
+          ><span id="packet-reply-status" role="status"></span
+          ><button id="packet-send-toggle" type="button">启动</button><span>循环发送</span
+          ><span id="packet-send-status" role="status"></span></div
+        ><div class="dialog-actions"
+          ><button id="packet-save" data-save-action type="button">保存配置</button></div
+        ></section
+      ></dialog
+    ><dialog id="toolbox-dialog" class="desktop-feature-dialog"
+      ><section
+        ><div class="dialog-heading"
+          ><h2>工具箱</h2
+          ><button type="button" data-close="toolbox-dialog" aria-label="关闭">×</button></div
+        ><nav id="tool-navigation" class="tool-navigation" aria-label="工具分类"></nav
+        ><div class="feature-toolbar"
+          ><label id="tool-kind-wrap" hidden
+            >工具<select id="tool-kind"
+              ><option value="number">数值转换</option
+              ><option value="encoding">编码转换</option
+              ><option value="string">文本处理</option
+              ><option value="time">时间戳</option
+              ><option value="iec104">IEC104协议解析</option>
+              ><option value="modbus">Modbus 报文</option
+              ><option value="network">IPv4 网段</option></select
+            ></label
+          ><label id="tool-protocol-wrap" hidden
+            >协议<select id="tool-protocol">
+              <option value="iec104">IEC 104</option>
+              <option value="modbus">Modbus</option></select
+            ></label
+          ><label id="tool-operation-wrap">操作<select id="tool-operation"></select></label
+          ><label id="tool-encoding-wrap"
+            >编码<select id="tool-encoding"
+              ><option value="utf8">UTF-8</option
+              ><option value="gbk">GBK</option
+              ><option value="gb18030">GB18030</option
+              ><option value="utf16le">UTF-16LE</option
+              ><option value="utf16be">UTF-16BE</option></select
+            ></label
+          ><label id="tool-order-wrap"
+            >字节序<select id="tool-order"
+              ><option value="little">小端</option
+              ><option value="big">大端（ABCD）</option
+              ><option value="word-swap">交换字（CDAB）</option
+              ><option value="byte-swap">交换字内字节（BADC）</option></select
+            ></label
+          ><label id="tool-transport-wrap" hidden
+            >协议格式<select id="tool-transport"
+              ><option value="rtu">Modbus RTU</option
+              ><option value="tcp">Modbus TCP</option
+              ><option value="ascii">Modbus ASCII</option></select
+            ></label
+          ><label id="tool-transaction-wrap" hidden
+            >事务编号<input
+              id="tool-transaction"
+              inputmode="numeric"
+              autocomplete="off"
+              maxlength="5"
+              placeholder="1" /></label
+          ><label id="tool-time-unit-wrap" hidden
+            >单位<select id="tool-time-unit">
+              <option value="unix-ms">毫秒</option>
+              <option value="unix-seconds">秒</option></select
+            ></label
+          ><label id="tool-zone-wrap"
+            >时区<select id="tool-zone"
+              ><option value="+08:00">UTC+8</option
+              ><option value="UTC">UTC</option></select
+            ></label
+          ><div class="tool-actions">
+            <button
+              id="tool-example"
+              class="tool-icon-button"
+              type="button"
+              aria-label="填入示例"
+              title="填入示例"
+              hidden
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                <path d="M8.5 2.5h4v11h-9v-5m-1-3h6m-2-2 2 2-2 2" />
+              </svg>
+            </button>
+            <button
+              id="toolbox-run"
+              data-save-action
+              type="button"
+              class="primary tool-icon-button"
+              aria-label="转换"
+              aria-keyshortcuts="Control+Enter Meta+Enter"
+              title="转换"
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                <path d="M5 3v10l7-5z" />
+              </svg>
+            </button> </div></div
+        ><div id="tool-read-fields" class="feature-toolbar" hidden
+          ><label>站号<input id="tool-read-unit" inputmode="numeric" maxlength="3" /></label
+          ><label
+            >读取功能<select id="tool-read-function"
+              ><option value="1">01 读线圈</option
+              ><option value="2">02 读离散输入</option
+              ><option value="3">03 读保持寄存器</option
+              ><option value="4">04 读输入寄存器</option></select
+            ></label
+          ><label
+            >起始点位（从 0 起）<input
+              id="tool-read-address"
+              inputmode="numeric"
+              maxlength="5" /></label
+          ><label
+            >数量<input id="tool-read-quantity" inputmode="numeric" maxlength="4" /></label></div
+        ><div id="tool-workspace" class="toolbox-editors"
+          ><div id="tool-source" class="tool-source"
+            ><label id="tool-input-wrap"
+              ><span id="tool-input-label">整数</span
+              ><textarea id="tool-input" spellcheck="false"></textarea></label></div
+          ><div id="tool-result-pane" class="tool-result-pane"
+            ><div class="tool-result-heading"
+              ><h3 id="tool-output-label">结果</h3
+              ><div class="tool-actions">
+                <button
+                  id="toolbox-swap"
+                  class="tool-icon-button"
+                  type="button"
+                  aria-label="交换方向"
+                  title="交换方向"
+                  hidden
+                >
+                  <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                    <path d="M2.5 5h11m-3-3 3 3-3 3m3 3h-11m3-3-3 3 3 3" />
+                  </svg>
+                </button>
+                <button
+                  id="toolbox-parse"
+                  class="tool-icon-button"
+                  type="button"
+                  aria-label="带入解析"
+                  title="带入解析"
+                  hidden
+                >
+                  <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                    <path d="M3 4v4a2 2 0 0 0 2 2h8m-3-3 3 3-3 3" />
+                  </svg>
+                </button>
+                <button
+                  id="toolbox-copy"
+                  class="tool-icon-button"
+                  type="button"
+                  aria-label="复制结果"
+                  title="复制结果"
+                >
+                  <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                    <rect x="5.5" y="5.5" width="7.5" height="8" rx="1" />
+                    <path d="M10 3.5v-1H2.5V11h1" />
+                  </svg>
+                </button> </div></div
+            ><p class="form-error" role="alert" hidden></p
+            ><textarea
+              id="tool-output"
+              aria-labelledby="tool-output-label"
+              readonly
+              spellcheck="false"
+              hidden
+            ></textarea
+            ><div id="tool-fields" class="tool-fields"></div></div></div
+        ><div id="tool-time-workspace" hidden>
+          <div class="tool-time-row">
+            <span id="tool-time-live-label">当前时间戳</span>
+            <div class="tool-time-value">
+              <output
+                id="tool-time-live"
+                aria-labelledby="tool-time-live-label"
+                aria-live="off"
+              ></output>
+              <button
+                id="tool-time-copy-now"
+                class="tool-icon-button"
+                type="button"
+                aria-label="复制当前时间戳"
+                title="复制当前时间戳"
+              >
+                <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                  <rect x="5.5" y="5.5" width="7.5" height="8" rx="1" />
+                  <path d="M10 3.5v-1H2.5V11h1" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <form id="tool-time-from-stamp" class="tool-time-row">
+            <label for="tool-time-stamp">Unix 时间戳</label>
+            <div class="tool-time-value">
+              <input
+                id="tool-time-stamp"
+                type="text"
+                maxlength="20"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button
+                type="submit"
+                class="primary tool-icon-button"
+                aria-label="转为日期时间"
+                title="转为日期时间"
+              >
+                <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                  <path d="M8 2.5v11m-4-4 4 4 4-4" />
+                </svg>
+              </button>
+            </div>
+          </form>
+          <form id="tool-time-from-date" class="tool-time-row">
+            <label for="tool-time-date">日期时间</label>
+            <div class="tool-time-value">
+              <input
+                id="tool-time-date"
+                type="text"
+                inputmode="numeric"
+                autocomplete="off"
+                spellcheck="false"
+                value="YYYYMMDD HH:mm:ss.SSS"
+              />
+              <button
+                type="submit"
+                class="primary tool-icon-button"
+                aria-label="转为时间戳"
+                title="转为时间戳"
+              >
+                <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                  <path d="M8 13.5v-11m-4 4 4-4 4 4" />
+                </svg>
+              </button>
+            </div>
+          </form>
+          <p
+            id="tool-time-error"
+            class="form-error"
+            role="alert"
+            hidden
+          ></p> </div></section></dialog
+    ><script src="desktop-features.js"></script
     ><script src="forms.js"></script
     ><script type="module" src="app.js"></script> </body
 ></html>

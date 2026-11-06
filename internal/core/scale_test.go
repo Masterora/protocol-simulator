@@ -795,7 +795,9 @@ func TestScaleAutomaticReportingRecovery(t *testing.T) {
 	}
 	expected, _ := e.Device(server.ID, "device")
 	for _, p := range expected.Points {
-		if !reflect.DeepEqual(p, model[PointKey{p.Kind, p.Address}]) {
+		observed := model[PointKey{p.Kind, p.Address}]
+		observed.CommunicationAt = "" // Read-model metadata does not belong to editable point data.
+		if !reflect.DeepEqual(p, observed) {
 			t.Fatal("incremental stream lost point", p)
 		}
 	}

@@ -12,6 +12,21 @@
 
 ## 开发检查
 
+日常修改界面使用原生开发模式（无需重复打包）：
+
+```bash
+npm run dev
+```
+
+Windows 使用 `npm run dev:windows`。macOS 只安装了 Command Line Tools 时可用 `DEVELOPER_DIR=/Library/Developer/CommandLineTools npm run dev`；Linux 需具备下述 GTK/WebKit 构建依赖。
+
+- CSS 自动替换样式，保持输入、焦点、连接与任务。
+- HTML / JS / SVG 自动刷新主窗口、配置窗口和独立工程窗口；输入框仍聚焦时等待结束编辑。刷新会重新初始化界面，尚未保存的表单草稿应先保存；后台工程、点值、连接与任务保持运行。刷新不会替用户保存或发送报文。
+- Go / go.mod / go.sum / wails.json 变化后自动构建；成功后重启本次开发进程及其窗口，连接与任务会中断，未保存工程需预先保存。构建失败保留旧进程，下一次代码修改后重试。
+- Ctrl+C 结束本次开发程序及其独立窗口。开发产物在 `work/dev/`，不替换 `build/bin/` 或 `outputs/`。独立项目只在开发进程组内启动，其他已经打开的安装版不受影响。
+
+开发资源访问仅编译到 `devassets` 构建标签中；正式包忽略 `PRS_DEV_ASSETS`，继续使用内嵌资源。`--build-only` 仅构建；`--assets-dir`、`--work-dir` 可指定独立验收目录。开发模式不代替下面的测试和正式交付构建。
+
 ```bash
 npm ci
 npm run check
@@ -33,6 +48,8 @@ bash build-macos.sh
 
 需要指定 Command Line Tools 时，使用 `DEVELOPER_DIR=/Library/Developer/CommandLineTools bash build-macos.sh`，无需修改全局工具设置。
 
+VS Code 若出现 `go list failed to return CompiledGoFiles` 且包含 Xcode 许可错误，原因是 Go 语言服务无法执行 cgo 所需的 Apple 编译工具。可在终端运行 `sudo xcodebuild -license` 阅读并接受许可；也可使用已经安装且可用的 Command Line Tools，在本机 VS Code 用户设置的 `go.toolsEnvVars` 中加入 `"DEVELOPER_DIR": "/Library/Developer/CommandLineTools"`，然后执行 `Go: Restart Language Server`。不要通过关闭 cgo 处理此问题，桌面应用需要它。
+
 Windows：
 
 ```powershell
@@ -41,9 +58,11 @@ npm ci
 python scripts/package_protocol.py
 ```
 
-构建脚本执行协议、界面、打包及原生窗口检查，记录源码、二进制和日志身份。macOS 还检查串口 PTY、竞态和 Windows 交叉构建；Windows 使用 `build/windows/resources.ps1` 调用与 macOS 交叉构建共用的资源工具。版本号仅在 `wails.json` 的 `info.productVersion` 中维护，应用元数据、Windows 数字/字符串版本、清单和 Setup 均由此生成。原生检查覆盖25个有效场景，合并窗口的历史入口不重复测试。
+构建脚本执行协议、界面、打包及原生窗口检查，记录源码、二进制和日志身份。macOS 还检查串口 PTY、竞态和 Windows 交叉构建；Windows 使用 `build/windows/resources.ps1` 调用与 macOS 交叉构建共用的资源工具。版本号仅在 `wails.json` 的 `info.productVersion` 中维护，应用元数据、Windows 数字/字符串版本、清单和 Setup 均由此生成。原生检查覆盖28个有效场景，合并窗口的历史入口不重复测试。
 
 `outputs/` 发布 macOS、Windows 安装包及 Linux 对应架构的服务器压缩包和桌面 DEB。macOS 包为 `protocol-simulator.dmg`，Windows 包为 `protocol-simulator-Setup.exe`。macOS 镜像包含 Universal `.app` 和 Applications 快捷入口；指南、示例、许可和构建摘要位于“资料”文件夹。暂存文件位于 `work/`，打包完成后清理。
+
+桌面安装包和 Linux 打包成功后，自动清理 `work/`、`verification/` 中早于本轮构建、且哈希和修改时间均未变化的已知生成文件。失败时保留现场。正式安装包、工程 JSON、配置与未知文件、源码、工具缓存、符号链接、活动任务目录、本轮新建或更新的证据，以及各平台当前固定构建报告均保留。清理明细写入固定的 `verification/cleanup-artifacts.json`，每次覆盖；Linux 指定的自定义输出、暂存和证据目录不参与历史清理。
 
 `scripts/package_protocol.py` 校验当前构建后打包。NSIS 安装器按用户安装，在改动应用前检测 WebView2；已有应用运行或依赖安装失败时退出。升级保留已有示例，卸载只清理明确的程序文件，不递归删除安装目录，也不移除 WebView2 共享运行时。打包后用 7-Zip 解包核对程序和引导程序哈希，并验证安装器的图标、版本资源。安装器当前未做 Authenticode 签名。
 
@@ -96,4 +115,4 @@ sudo python3 scripts/verify_linux_desktop.py --package outputs/protocol-simulato
 
 ## 服务器终端界面验收
 
-`internal/observe/` 提供本机所属用户的观测与数据点操作接口，`internal/tui/` 只包含客户端界面；不持有引擎生命周期。手动操作只修改运行时数据点，不写工程文件、不暂停自动规则。通过 `python3 scripts/verify_tui_posix.py --binary PATH_TO_PRS --output verification/tui-runtime` 在 macOS/Linux 的真实 PTY 中验证双工程持续通信、搜索、点位分页、报文与日志、暂停、终端恢复、退出/Ctrl+C/崩溃和观测连接丢失隔离。验收使用 Python 标准库，无需图形桌面。
+`internal/observe/` 提供本机所属用户的观测与数据点操作接口，`internal/tui/` 只包含客户端界面；不持有引擎生命周期。显式配置和点值编辑通过 `internal/projectfile/` 修订号检查并原子保存，不暂停无关自动规则；自动运行值不写回文件。`--runtime-only` 保留明确的临时点值修改。新增工程通过独立后台进程启动，通道手动连接。通过 `python3 scripts/verify_tui_posix.py --binary PATH_TO_PRS --output verification/tui-runtime` 在 macOS/Linux 的真实 PTY 中验证双工程持续通信、搜索、点位分页、报文与日志、暂停、终端恢复、退出/Ctrl+C/崩溃和观测连接丢失隔离。验收使用 Python 标准库，无需图形桌面。

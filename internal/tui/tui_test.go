@@ -28,7 +28,7 @@ func TestTerminalTextCannotInjectControlsAndRespectsCellWidths(t *testing.T) {
 		}
 	}
 }
-func TestNavigationSearchDetailPauseAndQuitNeverOwnRuntime(t *testing.T) {
+func TestNavigationSearchDetailAndQuitNeverOwnRuntime(t *testing.T) {
 	m := model{instances: []instance{{socket: "one", info: observe.Info{PID: 1, View: core.Inspection{Name: "工程一"}}}, {socket: "two", info: observe.Info{PID: 2, View: core.Inspection{Name: "工程二"}}}}}
 	for _, key := range []string{"/", "工", "程", "二", "enter"} {
 		if m.key(key) {
@@ -57,10 +57,6 @@ func TestNavigationSearchDetailPauseAndQuitNeverOwnRuntime(t *testing.T) {
 		t.Fatal("point detail unavailable")
 	}
 	m.key("esc")
-	m.key("p")
-	if !m.paused {
-		t.Fatal("display not paused")
-	}
 	m.key(":")
 	for _, key := range []string{"l", "o", "g", "s", "enter"} {
 		m.key(key)

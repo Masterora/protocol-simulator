@@ -11,6 +11,7 @@ import tempfile
 from delivery import copy_user_payload, digest, preserve_user_files, remove_legacy_delivery, verify_current_build, verify_frontend
 from macos_dmg import application_icon, create_disk_image
 from windows_installer import build_installer, SETUP_NAME
+from cleanup_artifacts import ArtifactCleanup
 
 
 def macos_report(app, checks):
@@ -42,6 +43,8 @@ def package():
     windows = base / 'build/bin/protocol-simulator.exe'
     primary = app / 'Contents/MacOS/protocol-simulator' if macos else windows
     proof, checks = verify_current_build(base, primary, 'macos' if macos else 'windows')
+    started = json.loads((base / 'verification/build-start.json').read_text(encoding='utf-8'))['started']
+    cleanup = ArtifactCleanup(base, started=started)
     windows_proof, windows_checks = proof, checks
     if macos:
         cross = json.loads((base / 'verification/windows-cross-build.json').read_text(encoding='utf-8'))
@@ -77,9 +80,11 @@ def package():
         # Publish only after every installer for this host passes verification.
         os.replace(setup, out / SETUP_NAME)
     retained = remove_legacy_delivery(out)
+    cleanup_report = cleanup.finish()
     print(json.dumps({'windows_setup': str(out / SETUP_NAME),
                       'macos_dmg': str(out / 'protocol-simulator.dmg') if macos else None,
-                      'retained_user_or_running_files': retained, 'checks': checks}, ensure_ascii=False))
+                      'retained_user_or_running_files': retained, 'checks': checks,
+                      'cleanup': cleanup_report}, ensure_ascii=False))
 
 
 if __name__ == '__main__':

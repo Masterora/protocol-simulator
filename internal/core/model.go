@@ -10,19 +10,20 @@ import (
 )
 
 type Point struct {
-	WireType    byte    `json:"wireType,omitempty"`
-	Timestamp   string  `json:"timestamp,omitempty"`
-	TimeInvalid bool    `json:"timeInvalid,omitempty"`
-	DataType    string  `json:"dataType,omitempty"`
-	ByteOrder   string  `json:"byteOrder,omitempty"`
-	Tab         string  `json:"tab,omitempty"`
-	Address     uint32  `json:"address"`
-	Name        string  `json:"name"`
-	Kind        string  `json:"kind"` // yx, yc, coil, discrete, holding, input
-	Value       float64 `json:"value"`
-	Quality     byte    `json:"quality"`
-	Updated     string  `json:"updated,omitempty"`
-	Feedback    string  `json:"feedback,omitempty"`
+	CommunicationAt string  `json:"communicationAt,omitempty"`
+	WireType        byte    `json:"wireType,omitempty"`
+	Timestamp       string  `json:"timestamp,omitempty"`
+	TimeInvalid     bool    `json:"timeInvalid,omitempty"`
+	DataType        string  `json:"dataType,omitempty"`
+	ByteOrder       string  `json:"byteOrder,omitempty"`
+	Tab             string  `json:"tab,omitempty"`
+	Address         uint32  `json:"address"`
+	Name            string  `json:"name"`
+	Kind            string  `json:"kind"` // yx, yc, coil, discrete, holding, input
+	Value           float64 `json:"value"`
+	Quality         byte    `json:"quality"`
+	Updated         string  `json:"updated,omitempty"`
+	Feedback        string  `json:"feedback,omitempty"`
 }
 
 type PointKey struct {
@@ -42,6 +43,7 @@ type Device struct {
 }
 
 type Channel struct {
+	RawTools       *RawToolsConfig   `json:"rawTools,omitempty"`
 	TransportDraft map[string]string `json:"transportDraft,omitempty"`
 	Devices        []Device          `json:"devices"`
 	ID             string            `json:"id"`
@@ -134,6 +136,14 @@ func (c *Channel) Defaults() {
 }
 
 func (c Channel) Validate() error {
+	if c.RawTools != nil {
+		if c.Protocol != "raw" {
+			return errors.New("报文自动化配置仅适用于RAW通道")
+		}
+		if err := validateRawTools(*c.RawTools); err != nil {
+			return err
+		}
+	}
 	if strings.TrimSpace(c.Name) == "" {
 		return errors.New("通道名称不能为空")
 	}

@@ -33,9 +33,25 @@ func (s *Server) operatePoint(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(core.ManualPointResult{Error: "请求只能包含一个 JSON 对象"})
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 1500*time.Millisecond)
+	timeout := 1500 * time.Millisecond
+	if req.Persist != nil && *req.Persist {
+		timeout = 12 * time.Second
+		http.NewResponseController(w).SetWriteDeadline(time.Now().Add(15 * time.Second))
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
-	result, err := s.engine.OperatePoint(ctx, req)
+	s.mu.Lock()
+	handler := s.pointHandler
+	s.mu.Unlock()
+	var result core.ManualPointResult
+	var err error
+	if handler != nil {
+		result, err = handler(ctx, req)
+	} else if req.Persist != nil && *req.Persist {
+		err = errors.New("此工程不支持保存配置，请升级服务进程")
+	} else {
+		result, err = s.engine.OperatePoint(ctx, req)
+	}
 	if err != nil {
 		result.Error = err.Error()
 		if !result.Applied && result.Receivers == 0 {
@@ -81,7 +97,7 @@ func Operate(ctx context.Context, socket string, request core.ManualPointRequest
 		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
 	}, DisableKeepAlives: true}
 	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 3 * time.Second}
+	client := &http.Client{Transport: transport, Timeout: 15 * time.Second}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/v1/point", bytes.NewReader(body))
 	if err != nil {
 		return result, err

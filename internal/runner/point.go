@@ -27,6 +27,7 @@ func pointCommand(ctx context.Context, args []string, out, stderr io.Writer) int
 	}
 	fs := flag.NewFlagSet("point "+args[0], flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	runtimeOnly := fs.Bool("runtime-only", false, "change live value without saving project JSON")
 	pid := fs.Int("pid", 0, "running project PID")
 	dir := fs.String("runtime-dir", observe.RuntimeDir(), "project socket directory")
 	channel := fs.String("channel", "", "channel ID")
@@ -104,12 +105,26 @@ func pointCommand(ctx context.Context, args []string, out, stderr io.Writer) int
 		return fail(1, errors.New("目标进程不支持手动点位操作，请升级该工程的服务进程"))
 	}
 	req.Metadata = info.View.Metadata
+	if req.Action == "set" {
+		persist := !*runtimeOnly
+		req.Persist = &persist
+		req.Revision = info.ConfigurationRevision
+		if persist && !info.ConfigurationOperations {
+			return fail(1, errors.New("服务不支持保存配置，请升级或显式使用 --runtime-only"))
+		}
+	}
+	if req.Action == "report" && *runtimeOnly {
+		return fail(2, errors.New("report 不接受 --runtime-only"))
+	}
 	result, err := observe.Operate(ctx, selected[0], req)
 	if *asJSON {
 		if encodeErr := json.NewEncoder(out).Encode(result); encodeErr != nil {
 			return fail(1, encodeErr)
 		}
 	} else {
+		if result.Saved {
+			fmt.Fprintln(out, "配置已保存："+result.Path)
+		}
 		if result.Point != nil {
 			fmt.Fprintf(out, "%s:%d = %g · 品质 %d\n", result.Point.Kind, result.Point.Address, result.Point.Value, result.Point.Quality)
 		}

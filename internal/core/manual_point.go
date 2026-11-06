@@ -11,6 +11,8 @@ import (
 var ErrPointConfigurationChanged = errors.New("工程配置已变化，请刷新后重试")
 
 type ManualPointRequest struct {
+	Persist  *bool    `json:"persist,omitempty"`
+	Revision string   `json:"revision,omitempty"`
 	Channel  string   `json:"channel"`
 	Device   string   `json:"device"`
 	Kind     string   `json:"kind"`
@@ -21,6 +23,9 @@ type ManualPointRequest struct {
 	Quality  *byte    `json:"quality,omitempty"`
 }
 type ManualPointResult struct {
+	Revision  string `json:"revision,omitempty"`
+	Saved     bool   `json:"saved,omitempty"`
+	Path      string `json:"path,omitempty"`
 	Point     *Point `json:"point,omitempty"`
 	Applied   bool   `json:"applied"`
 	Mode      string `json:"mode"`
@@ -31,7 +36,13 @@ type ManualPointResult struct {
 // OperatePoint serializes with automatic generation and reporting. Patch only
 // supplied fields; a quality edit must not restore an older automatic value.
 // It never writes the project file or changes a data job's lifecycle.
-func (e *Engine) OperatePoint(ctx context.Context, req ManualPointRequest) (result ManualPointResult, err error) {
+func (e *Engine) OperatePoint(ctx context.Context, req ManualPointRequest) (ManualPointResult, error) {
+	return e.OperatePointWithCommit(ctx, req, nil)
+}
+
+// The optional commit runs after validation and before changing runtime values.
+// Automatic updates and configuration operations stay serialized until it returns.
+func (e *Engine) OperatePointWithCommit(ctx context.Context, req ManualPointRequest, commit func() error) (result ManualPointResult, err error) {
 	if req.Channel == "" || req.Device == "" || req.Kind == "" {
 		return result, errors.New("必须指定通道、装置和点类型")
 	}
@@ -103,6 +114,13 @@ func (e *Engine) OperatePoint(ctx context.Context, req ManualPointRequest) (resu
 				e.mu.Unlock()
 				return result, err
 			}
+		}
+		if commit != nil {
+			if err = commit(); err != nil {
+				e.mu.Unlock()
+				return result, err
+			}
+			result.Saved = true
 		}
 		for _, update := range reports {
 			for i, p := range d.Points {

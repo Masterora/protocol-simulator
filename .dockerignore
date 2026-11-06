@@ -1,0 +1,14 @@
+# Only server source, examples and notices enter the build context.
+**
+!go.mod
+!go.sum
+!wails.json
+!THIRD-PARTY.txt
+!cmd/
+!cmd/prs/
+!cmd/prs/**
+!internal/
+!internal/**
+!examples/
+!examples/**
+**/*_test.go

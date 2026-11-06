@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"net"
 )
 
 // All point-table mutations must obey the same device layout and format rules
@@ -145,7 +146,7 @@ func (e *Engine) EnsureWorkspaceChannel(role string) error {
 	}
 	c := Channel{ID: newID(), Name: "通道1", Protocol: "raw", Role: role, Transport: "tcp-client", Address: "127.0.0.1:2404"}
 	if role == "server" {
-		c.Transport, c.Address = "tcp-server", "0.0.0.0:2404"
+		c.Transport, c.Address = "tcp-server", net.JoinHostPort(DefaultListenIP(), "2404")
 	}
 	c.Defaults()
 	if err := c.Validate(); err != nil {

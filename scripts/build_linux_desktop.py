@@ -10,6 +10,7 @@ import sys
 import tempfile
 
 from delivery import digest, source_hashes, verify_binary_licenses, verify_frontend
+from cleanup_artifacts import ArtifactCleanup
 
 
 def main():
@@ -26,6 +27,7 @@ def main():
     evidence = args.evidence_dir or root / 'verification'
     for directory in (output, work, evidence):
         directory.mkdir(parents=True, exist_ok=True)
+    cleanup = ArtifactCleanup(root, preserve=[p for p in (args.output_dir, args.work_dir, args.evidence_dir) if p is not None])
     before = source_hashes(root)
     metadata = json.loads((root / 'wails.json').read_text())
     version = metadata['info']['productVersion']
@@ -98,6 +100,7 @@ def main():
             Path(pending).unlink(missing_ok=True)
         (evidence / f'desktop-build-{architecture}.json').write_text(json.dumps(report, ensure_ascii=False, indent=2))
         print(json.dumps(report, ensure_ascii=False))
+    cleanup.finish()
 
 
 if __name__ == '__main__':

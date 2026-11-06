@@ -19,13 +19,15 @@ type InspectRequest struct {
 	Messages bool   `json:"messages"`
 }
 type InspectChannel struct {
-	ID       string       `json:"id"`
-	Name     string       `json:"name"`
-	Protocol string       `json:"protocol"`
-	Role     string       `json:"role"`
-	Address  string       `json:"address"`
-	Devices  int          `json:"devices"`
-	State    ChannelState `json:"state"`
+	ID           string       `json:"id"`
+	Name         string       `json:"name"`
+	Protocol     string       `json:"protocol"`
+	Role         string       `json:"role"`
+	Transport    string       `json:"transport,omitempty"`
+	LocalAddress string       `json:"localAddress,omitempty"`
+	Address      string       `json:"address"`
+	Devices      int          `json:"devices"`
+	State        ChannelState `json:"state"`
 }
 type InspectDevice struct {
 	ID            string `json:"id"`
@@ -35,20 +37,21 @@ type InspectDevice struct {
 	Points        int    `json:"points"`
 }
 type Inspection struct {
-	Metadata     uint64            `json:"metadata"`
-	Name         string            `json:"name"`
-	Path         string            `json:"path"`
-	Channels     []InspectChannel  `json:"channels"`
-	Devices      []InspectDevice   `json:"devices"`
-	Points       []Point           `json:"points"`
-	PointTotal   int               `json:"pointTotal"`
-	PointMatches int               `json:"pointMatches"`
-	PointKinds   map[string]int    `json:"pointKinds,omitempty"`
-	PointOrder   string            `json:"pointOrder,omitempty"`
-	Rules        *AutoDataSnapshot `json:"rules,omitempty"`
-	Messages     []Message         `json:"messages"`
-	Sequence     uint64            `json:"sequence"`
-	Missed       uint64            `json:"missed"`
+	BindingTargetNames map[string]string           `json:"bindingTargetNames,omitempty"`
+	PointBindings      map[string][]ControlMapping `json:"pointBindings,omitempty"`
+	Metadata           uint64                      `json:"metadata"`
+	Name               string                      `json:"name"`
+	Path               string                      `json:"path"`
+	Channels           []InspectChannel            `json:"channels"`
+	Devices            []InspectDevice             `json:"devices"`
+	Points             []Point                     `json:"points"`
+	PointTotal         int                         `json:"pointTotal"`
+	PointMatches       int                         `json:"pointMatches"`
+	PointKinds         map[string]int              `json:"pointKinds,omitempty"`
+	PointOrder         string                      `json:"pointOrder,omitempty"`
+	Rules              *AutoDataSnapshot           `json:"rules,omitempty"`
+	Messages           []Message                   `json:"messages"`
+	Sequence           uint64                      `json:"sequence"`
 }
 
 func (e *Engine) Inspect(request InspectRequest) Inspection {
@@ -70,7 +73,7 @@ func (e *Engine) Inspect(request InspectRequest) Inspection {
 		} else {
 			state.ReadyPeers = state.Peers
 		}
-		v.Channels = append(v.Channels, InspectChannel{c.ID, c.Name, c.Protocol, c.Role, c.Address, len(c.Devices), state})
+		v.Channels = append(v.Channels, InspectChannel{ID: c.ID, Name: c.Name, Protocol: c.Protocol, Role: c.Role, Transport: c.Transport, LocalAddress: c.LocalAddress, Address: c.Address, Devices: len(c.Devices), State: state})
 		if c.ID != request.Channel {
 			continue
 		}
@@ -105,7 +108,40 @@ func (e *Engine) Inspect(request InspectRequest) Inspection {
 			v.PointMatches = len(matches)
 			start := min(offset, len(matches))
 			for _, i := range matches[start : start+min(100, len(matches)-start)] {
-				v.Points = append(v.Points, d.Points[i])
+				v.Points = append(v.Points, e.communicationPointLocked(c.ID, d.ID, d.Points[i]))
+			}
+			if c.Role == "server" {
+				visible := map[PointKey]string{}
+				for _, p := range v.Points {
+					category := controlCategory(dataPointCategory(c.Protocol, p))
+					if category == "yk" || category == "yt" {
+						key := fmt.Sprintf("%s:%d", p.Kind, p.Address)
+						visible[PointKey{p.Kind, p.Address}] = key
+						if v.PointBindings == nil {
+							v.PointBindings = map[string][]ControlMapping{}
+						}
+						v.PointBindings[key] = []ControlMapping{}
+					}
+				}
+				if len(visible) > 0 {
+					targets := make(map[PointKey]struct{})
+					for _, category := range []string{"yk", "yt"} {
+						for _, mapping := range ControlConfiguration(d, category).Mappings {
+							if key, ok := visible[mapping.Source]; ok {
+								v.PointBindings[key] = append(v.PointBindings[key], mapping)
+								targets[mapping.Target] = struct{}{}
+							}
+						}
+					}
+					if len(targets) > 0 {
+						v.BindingTargetNames = make(map[string]string, len(targets))
+						for _, p := range d.Points {
+							if _, ok := targets[PointKey{p.Kind, p.Address}]; ok {
+								v.BindingTargetNames[fmt.Sprintf("%s:%d", p.Kind, p.Address)] = p.Name
+							}
+						}
+					}
+				}
 			}
 
 			category := "telemetry"
@@ -119,6 +155,7 @@ func (e *Engine) Inspect(request InspectRequest) Inspection {
 					view = job.view
 					view.Config = *config
 					view.Cycles = append([]uint64{}, job.view.Cycles...)
+					view.RuleStates = append([]string{}, job.view.RuleStates...)
 				}
 				v.Rules = &view
 			}
@@ -130,9 +167,6 @@ func (e *Engine) Inspect(request InspectRequest) Inspection {
 			m := e.messages[i]
 			if m.Sequence <= request.After {
 				continue
-			}
-			if len(v.Messages) == 0 && request.After > 0 && m.Sequence > request.After+1 {
-				v.Missed = m.Sequence - request.After - 1
 			}
 			v.Messages = append(v.Messages, m)
 		}

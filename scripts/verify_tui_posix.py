@@ -32,12 +32,18 @@ def recv_all(sock, size):
     return result
 
 
+holding_locks = {}
+
+
 def holding(sock, address=0):
-    sock.sendall(bytes.fromhex('002a000000060103') + struct.pack('>HH', address, 1))
-    header = recv_all(sock, 7)
-    data = recv_all(sock, int.from_bytes(header[4:6], 'big') - 1)
-    assert data[:2] == b'\x03\x02'
-    return int.from_bytes(data[2:], 'big')
+    # Background traffic and foreground assertions share protocol connections.
+    # Keep each request/response together so one reader cannot consume another's reply.
+    with holding_locks.setdefault(sock, threading.Lock()):
+        sock.sendall(bytes.fromhex('002a000000060103') + struct.pack('>HH', address, 1))
+        header = recv_all(sock, 7)
+        data = recv_all(sock, int.from_bytes(header[4:6], 'big') - 1)
+        assert data[:2] == b'\x03\x02'
+        return int.from_bytes(data[2:], 'big')
 
 
 def endpoint():
@@ -90,8 +96,10 @@ def main():
                 path = directory / f'project-{index}.json'; paths.append(path)
                 points = [{'address': i, 'kind': 'holding', 'name': (f'电压-{i}' if i == 204 else f'voltage-{i}'), 'value': 220 + index, 'quality': 0} for i in range(205)]
                 points.reverse()
-                points += [{'address': 1, 'kind': 'input', 'name': 'input-only', 'value': 99}, {'address': 2, 'kind': 'coil', 'name': 'coil-only', 'value': 1}]
+                points += [{'address': 1, 'kind': 'input', 'name': 'input-only', 'value': 99}, {'address': 2, 'kind': 'coil', 'name': 'coil-only', 'value': 1}, {'address': 3, 'kind': 'discrete', 'name': 'binding-feedback', 'value': 0}]
                 project = {'version': 2, 'name': f'Acceptance project {index}', 'channels': [{'id': f'channel-{index}', 'name': f'Channel {index}', 'protocol': 'modbus-tcp', 'role': 'server', 'transport': 'tcp-server', 'address': f'{address[0]}:{address[1]}', 'unit': 1, 'devices': [{'id': 'device-1', 'name': 'Device', 'unit': 1, 'commonAddress': 1, 'points': points, 'dataTests': {'telemetry': {'stopOnDisconnect': False, 'rules': [{'enabled': True, 'kind': 'holding', 'points': '0', 'intervalMs': 200, 'mode': 'increment', 'min': 220, 'max': 230, 'step': 1}]}}}]}]}
+                rules = project['channels'][0]['devices'][0]['dataTests']['telemetry']['rules']
+                rules.append({**rules[0], 'points': '2'})
                 path.write_text(json.dumps(project)); originals.append(path.read_bytes())
                 stream = (args.output / f'project-{index}.jsonl').open('wb'); streams.append(stream)
                 processes.append(subprocess.Popen([str(binary), 'run', str(path), '--runtime-dir', str(runtime), '--start-data-rules', '--log-format', 'json'], stdout=stream, stderr=subprocess.STDOUT))
@@ -155,39 +163,95 @@ def main():
             wait_screen('Acceptance project 0'); wait_screen('Acceptance project 1'); capture('projects')
             # Direct numeric/alias jumps must resolve project/channel/device without Enter.
             for number, title, content in [('2','通道','Channel '),('3','装置','Device'),('4','点位','voltage-0'),('5','规则','递增'),('6','报文','接收'),('7','日志','自动上报已启动')]:
-                key('1'); key(number); wait_screen(title+' ['); wait_screen(content)
-            key('1'); key(':pt\r'); wait_screen('点位 ['); wait_screen('voltage-0')
-            key('1'); key(':点位\r'); wait_screen('点位 ['); wait_screen('voltage-0')
-            key('1'); key('/Acceptance project 1\r'); key('4'); wait_screen('点位 ['); wait_screen('221'); capture('project-1-points')
+                key('1'); key(number); wait_screen(title+' '); wait_screen(content)
+            key('1'); key(':pt\r'); wait_screen('点位 '); wait_screen('voltage-0')
+            key('1'); key(':点位\r'); wait_screen('点位 '); wait_screen('voltage-0')
+            key('1'); key('/Acceptance project 1\r'); key('4'); wait_screen('点位 '); wait_screen('221'); capture('project-1-points')
             key('1'); key('/Acceptance project 0\r'); key('2')
-            wait_screen('通道 ['); wait_screen('Channel 0'); capture('channels')
-            key('\r'); wait_screen('装置 ['); wait_screen('Device'); key('\r')
-            wait_screen('点位 ['); wait_screen('voltage-0'); capture('points')
+            wait_screen('通道 '); wait_screen('Channel 0'); wait_screen('角色'); wait_screen('子站'); capture('channels')
+            key('\r'); wait_screen('装置 '); wait_screen('Device'); key('\r')
+            wait_screen('点位 '); wait_screen('voltage-0'); capture('points')
             lines=screen().splitlines(); top=next(i for i,l in enumerate(lines)if '┌'in l)
-            assert next(i for i,l in enumerate(lines)if '[q]'in l)>top
-            assert next(i for i,l in enumerate(lines)if '报文缺口'in l)>top
-            assert '保持寄存器 205'in screen()and '输入寄存器 1'in screen()
-            assert lines[-2].find('[Enter]')>=0 and '报文缺口'in lines[-1]
-            assert '['not in lines[3]and '['not in lines[4]
+            assert next(i for i,l in enumerate(lines)if '[q]'in l)<top
+            assert next(i for i,l in enumerate(lines)if re.match(r'^\s*\d+d \d{2}:\d{2}:\d{2}\s',l))>top
+            assert '保持寄存器'in screen()and '输入寄存器'in screen()
+            assert '保持寄存器 205'not in screen()and '输入寄存器 1'not in screen()
+            assert lines[-2].find('[Enter]')>=0 and re.match(r'^\s*\d+d \d{2}:\d{2}:\d{2}\s',lines[-1])
+            assert lines[-2].rstrip().endswith('Protocol-Simulator') and 'PRS' not in lines[0]
+            def cells(text):
+                import unicodedata
+                return sum(0 if unicodedata.combining(c) else 2 if unicodedata.east_asian_width(c) in ('W','F') else 1 for c in text)
+            assert cells(lines[-2].split('Protocol-Simulator')[0])==cells(lines[-1].split('Produced by Der_Orange 🍊')[0])
+            assert '缺口'not in screen() and '实时刷新' not in screen() and '界面更新' not in screen()
+            assert lines[-1].endswith('Produced by Der_Orange 🍊')
+            def visible_uptime():
+                match=re.match(r'^\s*(\d+)d (\d{2}):(\d{2}):(\d{2})\s',screen().splitlines()[-1])
+                assert match,'project uptime missing from footer: '+screen()
+                days,hours,minutes,seconds=map(int,match.groups())
+                assert hours<24 and minutes<60 and seconds<60
+                return days*86400+hours*3600+minutes*60+seconds
+            initial_uptime=visible_uptime();pump(1.2);assert visible_uptime()>initial_uptime,'project uptime stopped advancing'
+
+            assert '['not in lines[3]and lines[4].startswith('┌ 点位 ')
+            assert '保持寄存器'in lines[4]and '输入寄存器'in lines[4]
             assert '\x1b[1;38;5;231;48;5;60m 4:点位 'in raw.decode(errors='replace')
             assert '[d]'not in screen()and 'j/k'not in screen()and '回车'not in screen()
             key('djk');assert '点位详情'not in screen()
             first=next(l for l in screen().splitlines()if 'voltage-0'in l);assert '›'in first
-            header=next(l for l in screen().splitlines()if '地址'in l and '品质'in l);assert header.index('地址')==first.index('0')==3
-            addresses=[int(m.group(1))for l in lines if(m:=re.search(r'[│]..\s*(\d+)\s+0x',l))]
+            wait_screen('上报时间')
+            def point_communication_clock():
+                line=next((l for l in screen().splitlines() if 'voltage-0' in l),'')
+                match=re.search(r'\d{2}:\d{2}:\d{2}(?![.\d])',line)
+                return match.group(0) if match else None
+            header=next(l for l in screen().splitlines()if '点位'in l and '品质'in l);assert header.index('点位')==re.search(r'\s0\s+0x',first).start()+1
+            addresses=[int(m.group(1))for l in lines if(m:=re.search(r'[│]..\s*\d+\s+(\d+)\s+0x',l))]
             assert len(addresses)>4 and addresses==sorted(addresses)and addresses[0]==0,addresses
             key('\x1b[C');wait_screen('input-only');assert 'voltage-0'not in screen();capture('input-points')
             key('\x1b[C');wait_screen('coil-only');assert 'input-only'not in screen();capture('coil-points')
+            # The binding selector is real terminal input; saving it must not
+            # stop the existing rules or the independent project.
+            wait_screen('[e]编辑');wait_screen('未绑定');assert '[b]' not in screen()
+            key('B');assert '编辑点位' not in screen()
+            key('E');wait_screen('编辑点位')
+            for _ in range(7):key('\t')
+            wait_screen('绑定遥信点位');assert 'binding-feedback' not in screen()
+            key('3');key('\r');wait_screen('配置已保存并生效')
+            wait_screen('3 binding-feedback');capture('binding-selected')
+            binding=json.loads(paths[0].read_text())['channels'][0]['devices'][0]['configuration']['controls']['yk']['mappings']
+            assert binding==[{'source':{'kind':'coil','address':2},'target':{'kind':'discrete','address':3},'invert':False}]
+            key('7');wait_screen('日志 ');key('/配置已保存\r');wait_screen('编辑点位 ·')
+            assert 'configuration_saved' not in screen(),screen()
+            key('\r');wait_screen('日志详情');wait_screen('"事件标识": "configuration_saved"')
+            capture('configuration-saved-log');key('\x1b');pump(.4)
+            key('4');wait_screen('3 binding-feedback')
+            key('\r');wait_screen('点位详情');wait_screen('绑定点位：3 binding-feedback')
+            ordered=['点位：2', '名称：coil-only', '类型：线圈', '数值：', '品质：', '绑定点位：3 binding-feedback', '上报时间：']
+            positions=[screen().index(field) for field in ordered]
+            assert positions==sorted(positions),screen()
+            capture('binding-detail');key('\x1b');pump(.4)
+            with socket.create_connection(endpoints[0],timeout=2) as binding_socket:
+                def binding_exchange(data):
+                    binding_socket.sendall(bytes.fromhex(data))
+                    header=recv_all(binding_socket,7)
+                    return recv_all(binding_socket,int.from_bytes(header[4:6],'big')-1)
+                assert binding_exchange('00010000000601050002ff00')==bytes.fromhex('050002ff00')
+                assert binding_exchange('000200000006010200030001')==bytes.fromhex('020101')
+            key('e');wait_screen('编辑点位')
+            for _ in range(7):key('\t')
+            key('\x15');key('\r');wait_screen('未绑定')
+            assert json.loads(paths[0].read_text())['channels'][0]['devices'][0]['configuration']['controls']['yk']['mappings']==[]
+            key('\r');wait_screen('绑定点位：未绑定');key('\x1b');pump(.4)
+            assert paths[1].read_bytes()==originals[1]
             key('\x1b[D');wait_screen('input-only');key('\x1b[D');wait_screen('voltage-0')
             assert '装置总计'not in screen()and '点位 1-'not in screen()and '匹配'not in screen()
             # Edit a point outside the automatic rule and verify the actual Modbus value.
-            key('\x1b[B'); key('e');wait_screen('修改运行点值')
+            key('\x1b[B'); key('v');wait_screen('修改运行点值')
             key('333\r');wait_screen('已修改运行值')
             with socket.create_connection(endpoints[0],timeout=2)as manual_socket:assert holding(manual_socket,1)==333
             wait_screen('333');capture('manual-value')
-            key('e');wait_screen('修改运行点值');key('\t128\r');wait_screen('已修改运行值')
-            key('\r');wait_screen('点位详情');wait_screen('"品质": 128');wait_screen('"数值": 333');capture('manual-detail')
-            key('\x1b');pump(.4);key('s');wait_screen('Modbus 由主站读取');key('g')
+            key('v');wait_screen('修改运行点值');key('\t128\r');wait_screen('已修改运行值')
+            key('\r');wait_screen('点位详情');wait_screen('品质：128');wait_screen('数值：333');capture('manual-detail')
+            key('\x1b');pump(.4);key('s');wait_screen('Modbus 由主站读取');key('\x1b[H')
             def visible_value():
                 for line in screen().splitlines():
                     if 'voltage-0' in line:
@@ -201,31 +265,37 @@ def main():
                     current = read_value()
                     if current is not None and current != previous: return current
                 raise AssertionError('Displayed point did not refresh: '+screen())
+            previous=point_communication_clock();assert previous is not None,'actual poll time missing'
+            assert not re.search(r'\d{2}:\d{2}:\d{2}\.\d+', next(l for l in screen().splitlines() if 'voltage-0' in l))
+            wait_changed(previous,point_communication_clock)
+            capture('point-communication-time')
             initial_value = visible_value(); assert initial_value is not None
             wait_changed(initial_value)
-            key('p'); wait_screen('显示已暂停'); frozen = visible_value(); assert frozen is not None
-            reads_before = counts[:]; pump(.7)
-            assert visible_value() == frozen, 'Paused display changed values'
-            assert all(counts[i] > reads_before[i] for i in range(2)), 'Pause stopped protocol traffic'
-            key('p'); wait_screen('实时刷新'); wait_changed(frozen)
+            for unused_key in ('p', 'P', ' '):
+                before = visible_value(); reads_before = counts[:]
+                key(unused_key); wait_changed(before)
+                assert '显示已暂停' not in screen() and '[p]' not in screen()
+                assert all(counts[i] > reads_before[i] for i in range(2))
 
             # Detail values must continue to follow the selected point, not a saved copy.
-            key('\r'); wait_screen('点位详情'); wait_screen('"数值":')
+            key('\r'); wait_screen('点位详情'); wait_screen('数值：')
+            assert re.search(r'上报时间：\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?=\s)', screen()), screen()
+            assert '更新时间' not in screen()
             def detail_value():
-                value = re.search(r'"数值":\s*(\d+)', screen())
+                value = re.search(r'数值：\s*(\d+)', screen())
                 return int(value.group(1)) if value else None
             previous = detail_value(); assert previous is not None
             wait_changed(previous, detail_value)
-            key('p'); wait_screen('显示已暂停'); frozen_detail = detail_value(); reads_before = counts[:]
-            pump(.7); assert detail_value() == frozen_detail
-            assert all(counts[i] > reads_before[i] for i in range(2)), 'Detail pause stopped protocol traffic'
-            key('p'); wait_screen('实时刷新'); wait_changed(frozen_detail, detail_value); capture('point-detail')
-            key('\x1b'); pump(.5); wait_screen('点位 [')
+            for unused_key in ('p', 'P', ' '):
+                before = detail_value(); key(unused_key); wait_changed(before, detail_value)
+                assert '显示已暂停' not in screen()
+            capture('point-detail')
+            key('\x1b'); pump(.5); wait_screen('点位 ')
 
             key('/电压-204\r'); wait_screen('0xCC'); assert 'voltage-203' not in screen(); capture('search')
             key('\x1b'); pump(.5); wait_screen('voltage-0')
-            key(']'); wait_screen('101-200 / 205'); capture('point-page')
-            key('5'); wait_screen('规则 ['); wait_screen('递增'); capture('rules')
+            key('\x1b[6~'); wait_screen('voltage-100'); assert re.search(r'│› 101\s+100\s+0x',screen()); capture('point-page')
+            key('5'); wait_screen('规则 '); wait_screen('递增'); wait_screen('状态'); assert any('递增' in line and '运行中' in line for line in screen().splitlines()); capture('rules')
             key('\r'); wait_screen('规则详情'); wait_screen('"执行次数":')
             def rule_cycles():
                 value = re.search(r'"执行次数":\s*(\d+)', screen())
@@ -233,14 +303,31 @@ def main():
             previous = rule_cycles(); assert previous is not None
             wait_changed(previous, rule_cycles); capture('rule-detail'); key('\x1b'); pump(.5)
 
-            key('6'); wait_screen('报文 ['); wait_screen('接收'); wait_screen('发送'); capture('frames')
+            # Direct task shortcuts need no menu or Enter and leave the other
+            # project's wire traffic and project configuration unchanged.
+            key('R'); wait_screen('所选规则已停止'); wait_screen('[r]启动规则'); assert any('递增' in line and '已停止' in line for line in screen().splitlines()); assert '规则 ·' not in screen()
+            assert '当前装置规则任务' not in screen()
+            value0=holding(sockets[0]); sibling0=holding(sockets[0],2); other0=holding(sockets[1]); pump(.45)
+            assert holding(sockets[0])==value0 and holding(sockets[1])!=other0
+            assert holding(sockets[0],2)!=sibling0
+            assert any('递增' in line and '运行中' in line for line in screen().splitlines())
+            capture('individual-rule-stopped')
+            key('s'); assert '[r]启动规则' in screen(); assert holding(sockets[0]) == value0
+            key('R'); wait_screen('所选规则已启动'); wait_screen('[r]停止规则'); assert any('递增' in line and '运行中' in line for line in screen().splitlines()); assert '规则 ·' not in screen()
+            wait_changed(value0, lambda: holding(sockets[0]))
+            key('r'); wait_screen('所选规则已停止'); wait_screen('[r]启动规则'); assert '规则 ·' not in screen()
+            stopped = holding(sockets[0]); pump(.45); assert holding(sockets[0]) == stopped
+            key('r'); wait_screen('所选规则已启动'); wait_screen('[r]停止规则'); assert '规则 ·' not in screen()
+            assert '当前装置规则任务' not in screen()
+            key('p'); assert '显示已暂停' not in screen()
+            key('6'); wait_screen('报文 '); wait_screen('接收'); wait_screen('发送'); capture('frames')
             key('\r'); pump(.2); capture('frame-detail'); key('\x1b'); pump(.5)
-            key('p'); wait_screen('显示已暂停'); before_pause = counts[:]; pump(.7)
-            assert all(counts[i] > before_pause[i] for i in range(2)); key('p')
-            key('7'); wait_screen('日志 ['); wait_screen('自动上报已启动'); capture('logs')
-            key('?'); wait_screen('工程继续运行'); key('\x1bp'); wait_screen('显示已暂停'); key('p'); wait_screen('实时刷新')
+            key('p'); before = counts[:]; pump(.7)
+            assert all(counts[i] > before[i] for i in range(2)); assert '显示已暂停' not in screen()
+            key('7'); wait_screen('日志 '); wait_screen('自动上报已启动'); capture('logs')
+            key('?'); wait_screen('工程继续运行'); key('\x1bp'); wait_screen('Produced by Der_Orange 🍊'); assert '快捷键与资源视图' not in screen()
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 10, 40, 0, 0)); wait_screen('终端太小')
-            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 30, 150, 0, 0)); wait_screen('日志 [')
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 30, 150, 0, 0)); wait_screen('日志 ')
             key('q'); finish_viewer(); pump()
             assert same_terminal_settings(termios.tcgetattr(slave), original_terminal), ('q did not restore terminal', original_terminal, termios.tcgetattr(slave))
             assert b'\x1b[?1049l' in raw and b'\x1b[?25h' in raw
@@ -252,11 +339,11 @@ def main():
             launch(); wait_screen('Acceptance project 0'); viewer.kill(); viewer.wait(timeout=4)
             os.close(master); os.close(slave); master = slave = None
             count_before=counts[:];time.sleep(.4);assert all(counts[i]>count_before[i] for i in range(2))
-            original_terminal = launch();wait_screen('Acceptance project 0');key('\r');wait_screen('通道 [')
+            original_terminal = launch();wait_screen('Acceptance project 0');key('\r');wait_screen('通道 ')
             selected_socket = list(runtime.glob(f'{processes[0].pid}-*.sock'))
             assert len(selected_socket) == 1
             selected_socket[0].unlink()
-            wait_screen('连接中断');wait_screen('连接错误：')
+            wait_screen('连接错误：')
             count_before=counts[:];time.sleep(.4);assert all(counts[i]>count_before[i] for i in range(2))
             key('q');finish_viewer()
             assert same_terminal_settings(termios.tcgetattr(slave), original_terminal)
@@ -286,13 +373,18 @@ def main():
                 raise AssertionError('Expected IEC104 point report missing')
             assert iec_value(222)[0]==222
             original_terminal=launch(('--runtime-dir',str(iec_runtime)));wait_screen('Manual IEC104');key('4');wait_screen('IEC voltage')
-            key('e');wait_screen('修改运行点值');key('221.5\t128\r');wait_screen('已上报 1 个连接')
+            key('v');wait_screen('修改运行点值');key('221.5\t128\r');wait_screen('已上报')
             assert iec_value(221.5)==(221.5,128)
-            key('s');wait_screen('已上报 1 个连接');assert iec_value()[1]==128
+            key('s');wait_screen('已上报');assert iec_value()[1]==128
             capture('manual-iec')
             # Automatic generation is still active and takes effect after the manual change.
             assert iec_value(222)==(222.0,128)
-            key('\r');wait_screen('点位详情');wait_screen('"数值": 222');capture('manual-iec-detail');key('\x1b');pump(.4)
+            key('\r');wait_screen('点位详情');wait_screen('数值：222');wait_screen('报文类型：短浮点遥测（13）');capture('manual-iec-detail');key('\x1b');pump(.4)
+            key('e');wait_screen('编辑点位')
+            for _ in range(5):key('\t')
+            key(' ');wait_screen('选择报文类型');wait_screen('短浮点遥测（13）');wait_screen('标度化遥测（11）')
+            assert '单点遥信' not in screen() and '单点遥控' not in screen(),screen()
+            key('\x1b');pump(.4);key('\x1b');pump(.4)
             base_args=['--pid',str(iec_process.pid),'--runtime-dir',str(iec_runtime),'--channel','iec-manual','--device','device-1','--kind','yc','--address','16385']
             set_result=subprocess.run([str(binary),'point','set',*base_args,'--value','223.5','--quality','0','--json'],capture_output=True,text=True,timeout=5)
             assert set_result.returncode==0,set_result.stderr;assert json.loads(set_result.stdout)['applied'];assert iec_value(223.5)==(223.5,0)
@@ -305,14 +397,33 @@ def main():
             os.close(master);os.close(slave);master=slave=None;iec_socket.close();sockets_extra=[]
             assert all(p.poll() is None for p in processes), 'viewer stopped project process' 
             assert not failures, failures
-            assert all(path.read_bytes()==originals[i] for i,path in enumerate(paths)), 'viewer modified configuration'
+            # Only explicitly edited fields are persisted; automatic values remain runtime-only.
+            for i,path in enumerate(paths):
+                stored=json.loads(path.read_text());original=json.loads(originals[i])
+                actual=stored['channels'][0]['devices'][0];prior=original['channels'][0]['devices'][0]
+                old_points={(p['kind'],p['address']):p for p in prior['points']}
+                for point in actual['points']:
+                    assert 'communicationAt' not in point,'runtime communication history leaked into configuration'
+                    key=(point['kind'],point['address']);expected=old_points[key]
+                    if i==0 and key==('holding',1):
+                        assert point['value']==333 and point['quality']==128
+                    elif i==2 and key==('yc',16385):
+                        assert point['value']==223.5 and point['quality']==0
+                    else:assert point.get('value',0)==expected.get('value',0) and point.get('quality',0)==expected.get('quality',0)
+                for scope,config in prior.get('dataTests',{}).items():
+                    got=actual['dataTests'][scope]
+                    assert got['stopOnDisconnect']==config['stopOnDisconnect'] and len(got['rules'])==len(config['rules'])
+                    for old,new in zip(config['rules'],got['rules']):
+                        assert all(new.get(k)==v for k,v in old.items())
+                        assert all(k in old or v in (0,False,'',None) for k,v in new.items())
+            assert paths[1].read_bytes()==originals[1], 'independent project configuration changed'
             # The read-only API never stops an engine on client disconnect.
             report = {'passed': True, 'binarySHA256': hashlib.sha256(binary.read_bytes()).hexdigest(), 'actualPTY': True,
                       'twoIndependentProjects': True, 'directNumericAndAliasJumpsVerified': True, 'highlightedProjectScopeVerified': True, 'searchVerified': True, 'pointPaginationVerified': True,
                       'framesAndRuntimeLogsVerified': True, 'terminalRestoredOnQuitAndCtrlC': True,
-                      'quitCtrlCAndViewerCrashPreserveProjects': True, 'pausePreservesCommunication': True,
-                      'unicodeCommandsAndSearchVerified': True, 'pointKindTabsAndNumericOrderVerified': True, 'controlsAndLiveStatusAtBottomVerified': True, 'enterAndArrowKeysVerified': True, 'removedDJKShortcutsVerified': True, 'tableHeaderAlignmentVerified': True, 'manualValueQualityAndModbusReadVerified': True, 'compactPointSummaryVerified': True, 'manualIEC104WireAndCLIReportVerified': True, 'automaticRulesContinueAfterManualEditVerified': True, 'coloredNavigationWithoutBracketsVerified': True, 'livePointDetailRefreshPauseResumeVerified': True, 'liveRuleDetailCyclesVerified': True, 'livePointValuesRefreshVerified': True, 'pausedValuesFreezeAndResumeVerified': True, 'fastEscapeThenPauseVerified': True, 'resizeVerified': True, 'observerConnectionLossPreservesProjects': True, 'projectFilesUnchanged': True, 'protocolReadCounts': counts,
-                      'platform': sys.platform}
+                      'quitCtrlCAndViewerCrashPreserveProjects': True, 'formerPauseKeysPreserveLiveRefresh': True,
+                      'unicodeCommandsAndSearchVerified': True, 'pointKindTabsAndNumericOrderVerified': True, 'controlsAndLiveStatusAtBottomVerified': True, 'enterAndArrowKeysVerified': True, 'removedDJKShortcutsVerified': True, 'tableHeaderAlignmentVerified': True, 'manualValueQualityAndModbusReadVerified': True, 'compactPointSummaryVerified': True, 'manualIEC104WireAndCLIReportVerified': True, 'automaticRulesContinueAfterManualEditVerified': True, 'coloredNavigationWithoutBracketsVerified': True, 'livePointDetailAlwaysRefreshesVerified': True, 'liveRuleDetailCyclesVerified': True, 'livePointValuesRefreshVerified': True, 'pointCommunicationTimeVerified': True, 'pointClockSecondsOnlyVerified': True, 'displayPauseRemovedVerified': True, 'fastEscapeThenUnusedKeyVerified': True, 'resizeVerified': True, 'observerConnectionLossPreservesProjects': True, 'explicitEditsPersistedWithoutRuntimeSnapshot': True, 'independentProjectFileUnchanged': True, 'protocolReadCounts': counts,
+                      'singleRuleToggleKeyWithoutMenuVerified': True, 'liveRuleStatusColumnVerified': True, 'individualRuleIsolationVerified': True, 'pointBindingSelectorAndWireFeedbackVerified': True, 'pointDetailOrderAndBindingsVerified': True, 'localizedConfigurationSaveLogVerified': True, 'platform': sys.platform}
             (args.output/'runtime.json').write_text(json.dumps(report, indent=2));print(json.dumps(report))
         finally:
             stop.set()

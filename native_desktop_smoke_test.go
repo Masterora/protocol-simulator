@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"fmt"
 	"os"
@@ -36,8 +37,11 @@ func TestNativeWindowSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, kind := range []string{"channel-dialog", "device-dialog", "manager-dialog", "point-dialog", "confirm-dialog", "control-dialog", "control-step", "control-setpoint", "auto-yk-dialog", "auto-yt-dialog", "auto-bulk-dialog", "auto-data-dialog", "events-dialog", "device-client-modbus", "device-server-iec104", "device-server-modbus", "data-test-yx-modbus", "remote-yk-iec104", "remote-yt-iec104", "remote-yk-modbus", "remote-yt-modbus", "telemetry-values-yx", "telemetry-values-yc", "auto-yk-modbus", "auto-yt-modbus"} {
+	for _, kind := range []string{"channel-dialog", "device-dialog", "manager-dialog", "point-dialog", "confirm-dialog", "control-dialog", "control-step", "control-setpoint", "auto-yk-dialog", "auto-yt-dialog", "auto-bulk-dialog", "auto-data-dialog", "events-dialog", "device-client-modbus", "device-server-iec104", "device-server-modbus", "data-test-yx-modbus", "remote-yk-iec104", "remote-yt-iec104", "remote-yk-modbus", "remote-yt-modbus", "telemetry-values-yx", "telemetry-values-yc", "auto-yk-modbus", "auto-yt-modbus", "point-table-dialog", "packet-tools-dialog", "toolbox-dialog"} {
 		scenario := kind
+		if filter := os.Getenv("GYLAB_NATIVE_SCENARIO"); filter != "" && filter != scenario {
+			continue
+		}
 		if scenario == "control-step" || scenario == "control-setpoint" {
 			kind = "control-dialog"
 		}
@@ -61,7 +65,7 @@ func TestNativeWindowSmoke(t *testing.T) {
 		}
 		// Point editor needs a protocol device, while other editors may use RAW.
 		deviceID := ""
-		if kind == "point-dialog" || kind == "control-dialog" || isAutoWindow(kind) {
+		if kind == "point-dialog" || kind == "control-dialog" || kind == "point-table-dialog" || isAutoWindow(kind) {
 			devices := a.engine.Snapshot().Project.Channels[0].Devices
 			if len(devices) > 0 {
 				deviceID = devices[0].ID
@@ -100,6 +104,17 @@ func TestNativeWindowSmoke(t *testing.T) {
 			}
 			c.Role, c.Channel = role, channelID
 			c.Draft = []byte(fmt.Sprintf(`{"window":{"group":%q,"version":%q},"panels":[]}`, group, map[string]string{"iec104": "标准版", "modbus": "TCP版"}[group]))
+		}
+		if kind == "packet-tools-dialog" {
+			channelID, e := a.engine.UpsertChannel(core.Channel{Name: "packet tools", Protocol: "raw", Role: "client", Transport: "tcp-client", Address: "127.0.0.1:2404"})
+			if e != nil {
+				t.Fatal(e)
+			}
+			c.Channel = channelID
+			c.Device = ""
+			if err := a.engine.SaveRawTools(channelID, core.RawToolsConfig{Framing: "fixed", FrameLength: 2, IntervalMS: 1000, Cycles: 3, Replies: []core.RawReplyRule{{Enabled: true, Match: "01 03", Response: "01 03 02 00 2A", Format: "hex"}}, Rows: []core.RawSendRow{{Enabled: true, Data: "01 03", Format: "hex"}}}); err != nil {
+				t.Fatal(err)
+			}
 		}
 		if kind == "auto-data-dialog" {
 			protocol := "iec104"
@@ -201,6 +216,8 @@ func TestNativeWindowSmoke(t *testing.T) {
 			c.Ask = []byte(`{"title":"原生窗口验证","input":"name","choices":[["cancel","取消"],["ok","确认"]]}`)
 		}
 		cmd := exec.Command(binary, "--gylab-native-window="+sessionID)
+		var childLogs bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &childLogs, &childLogs
 		cmd.Env = append(os.Environ(), "GYLAB_NATIVE_ADDRESS="+n.address, "GYLAB_NATIVE_TOKEN="+n.token)
 		session := &nativeSession{context: c, cmd: cmd, result: make(chan nativeResult, 1)}
 		n.mu.Lock()
@@ -248,7 +265,7 @@ func TestNativeWindowSmoke(t *testing.T) {
 		delete(n.sessions, sessionID)
 		n.mu.Unlock()
 		if !ready {
-			t.Fatalf("%s native WebView did not finish rendering", kind)
+			t.Fatalf("%s native WebView did not finish rendering: %s", kind, childLogs.String())
 		}
 		layout := session.layout
 		if kind == "auto-data-dialog" && (layout.DataRuleRows != 0 || !layout.DataAddSymbol) {

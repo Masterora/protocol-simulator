@@ -1,0 +1,67 @@
+{
+  "version": 2,
+  "name": "RAW本机应答与循环发送",
+  "channels": [
+    {
+      "id": "raw-server",
+      "name": "RAW Server",
+      "protocol": "raw",
+      "role": "server",
+      "transport": "tcp-server",
+      "address": "127.0.0.1:24040",
+      "timeoutMs": 3000,
+      "devices": [],
+      "rawTools": {
+        "framing": "fixed",
+        "frameLength": 2,
+        "delimiter": "0D0A",
+        "idleMs": 30,
+        "replies": [
+          {
+            "enabled": true,
+            "offset": 0,
+            "match": "01 03",
+            "response": "01 03 02 00 2A",
+            "format": "hex",
+            "checksum": "none",
+            "delayMs": 0
+          }
+        ],
+        "rows": [],
+        "selection": "",
+        "intervalMs": 1000,
+        "cycleMs": 0,
+        "cycles": 3
+      }
+    },
+    {
+      "id": "raw-client",
+      "name": "RAW Client",
+      "protocol": "raw",
+      "role": "client",
+      "transport": "tcp-client",
+      "address": "127.0.0.1:24040",
+      "timeoutMs": 3000,
+      "devices": [],
+      "rawTools": {
+        "framing": "fixed",
+        "frameLength": 2,
+        "delimiter": "0D0A",
+        "idleMs": 30,
+        "replies": [],
+        "rows": [
+          {
+            "enabled": true,
+            "data": "01 03",
+            "format": "hex",
+            "checksum": "none"
+          }
+        ],
+        "selection": "",
+        "intervalMs": 1000,
+        "cycleMs": 0,
+        "cycles": 3
+      }
+    }
+  ]
+}

@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-func TestPointCommandTargetsRunningProcessAndLeavesSavedConfigurationUntouched(t *testing.T) {
+func TestPointCommandRuntimeOnlyTargetsProcessAndLeavesConfigurationUntouched(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("point commands attach through Unix-only observation sockets")
 	}
@@ -38,7 +38,7 @@ func TestPointCommandTargetsRunningProcessAndLeavesSavedConfigurationUntouched(t
 		t.Fatal(err)
 	}
 	defer server.Close()
-	args := []string{"point", "set", "--pid", strconv.Itoa(os.Getpid()), "--runtime-dir", dir, "--channel", "server", "--device", "device", "--kind", "holding", "--address", "0x0", "--value", "0", "--quality", "128", "--json"}
+	args := []string{"point", "set", "--runtime-only", "--pid", strconv.Itoa(os.Getpid()), "--runtime-dir", dir, "--channel", "server", "--device", "device", "--kind", "holding", "--address", "0x0", "--value", "0", "--quality", "128", "--json"}
 	var out, stderr bytes.Buffer
 	if code := Execute(context.Background(), args, &out, &stderr, "test"); code != 0 {
 		t.Fatal(code, out.String(), stderr.String())

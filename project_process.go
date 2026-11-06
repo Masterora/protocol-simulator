@@ -17,6 +17,7 @@ import (
 const projectWindowArg = "--protocol-project="
 
 type projectWindowConfig struct {
+	Raw  bool   `json:"raw,omitempty"`
 	Name string `json:"name"`
 	Role string `json:"role"`
 }
@@ -27,7 +28,17 @@ func projectForWindow(config projectWindowConfig) (core.Project, error) {
 		return core.Project{}, errors.New("工程名称应为 1–100 字")
 	}
 	staged := core.NewEngine()
-	if err := staged.EnsureWorkspaceChannel(config.Role); err != nil {
+	if config.Raw {
+		transport, address := "tcp-client", "127.0.0.1:2404"
+		if config.Role == "server" {
+			transport, address = "tcp-server", "127.0.0.1:24040"
+		} else if config.Role != "client" {
+			return core.Project{}, errors.New("请选择主站或子站")
+		}
+		if _, err := staged.UpsertChannel(core.Channel{Name: "通道1", Role: config.Role, Protocol: "raw", Transport: transport, Address: address}); err != nil {
+			return core.Project{}, err
+		}
+	} else if err := staged.EnsureWorkspaceChannel(config.Role); err != nil {
 		return core.Project{}, err
 	}
 	project := staged.Snapshot().Project
@@ -84,7 +95,7 @@ func projectCommand(config projectWindowConfig) (*exec.Cmd, error) {
 	// not registered as an owned editor, so closing this project cannot kill it.
 	arg := projectWindowArg + base64.RawURLEncoding.EncodeToString(data)
 	bundle := filepath.Dir(filepath.Dir(filepath.Dir(binary)))
-	if goruntime.GOOS == "darwin" && strings.HasSuffix(bundle, ".app") && filepath.Base(filepath.Dir(binary)) == "MacOS" {
+	if !developmentProjectLaunch() && goruntime.GOOS == "darwin" && strings.HasSuffix(bundle, ".app") && filepath.Base(filepath.Dir(binary)) == "MacOS" {
 		// Launch Services registers and activates a separate app instance. A raw
 		// fork/exec does not reliably expose a second main window to macOS.
 		return exec.Command("open", "-n", "-a", bundle, "--args", arg), nil
@@ -92,7 +103,9 @@ func projectCommand(config projectWindowConfig) (*exec.Cmd, error) {
 	return exec.Command(binary, arg), nil
 }
 func (a *App) NewProject(name, role string) error {
-	config := projectWindowConfig{Name: name, Role: role}
+	return a.launchProjectWindow(projectWindowConfig{Name: name, Role: role})
+}
+func (a *App) launchProjectWindow(config projectWindowConfig) error {
 	if _, err := projectForWindow(config); err != nil {
 		return err
 	}
@@ -105,6 +118,9 @@ func (a *App) NewProject(name, role string) error {
 	}
 	if goruntime.GOOS == "darwin" && filepath.Base(cmd.Path) == "open" {
 		return cmd.Run()
+	}
+	if developmentProjectLaunch() {
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	}
 	if err = cmd.Start(); err != nil {
 		return err

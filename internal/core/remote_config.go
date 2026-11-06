@@ -86,6 +86,11 @@ func (e *Engine) GetControlSimulation(channel, device, category string) (Control
 	if category != "yk" && category != "yt" {
 		return ControlSimulation{}, errors.New("控制分类无效")
 	}
+	return ControlConfiguration(d, category), nil
+}
+
+// ControlConfiguration includes legacy feedback without mutating the device.
+func ControlConfiguration(d Device, category string) ControlSimulation {
 	cfg := simulationFor(d, category)
 	for _, source := range d.Points {
 		if category != "yk" || source.Feedback == "" || source.Kind != "yk" && source.Tab != "yk" && source.Kind != "coil" {
@@ -114,7 +119,74 @@ func (e *Engine) GetControlSimulation(channel, device, category string) (Control
 			}
 		}
 	}
-	return cfg, nil
+	return cfg
+}
+
+// PointBindingOptions restricts binding edits to command points in this device.
+func PointBindingOptions(c Channel, d Device, key PointKey) (string, []Point, error) {
+	source, ok := findRemotePoint(d.Points, key)
+	category := controlCategory(dataPointCategory(c.Protocol, source))
+	if !ok || c.Role != "server" || category != "yk" && category != "yt" || c.Protocol != "iec104" && c.Protocol != "modbus-tcp" && c.Protocol != "modbus-rtu" {
+		return "", nil, errors.New("请在子站遥控或遥调点位上配置绑定")
+	}
+	expected := "yc"
+	if category == "yk" {
+		expected = "yx"
+	}
+	var targets []Point
+	for _, p := range d.Points {
+		if dataPointCategory(c.Protocol, p) == expected {
+			targets = append(targets, p)
+		}
+	}
+	return category, targets, nil
+}
+
+func SetPointBindings(c Channel, d *Device, source PointKey, mappings []ControlMapping) error {
+	category, _, err := PointBindingOptions(c, *d, source)
+	if err != nil {
+		return err
+	}
+	cfg := ControlConfiguration(*d, category)
+	kept := make([]ControlMapping, 0, len(cfg.Mappings)+len(mappings))
+	for _, m := range cfg.Mappings {
+		if m.Source != source {
+			kept = append(kept, m)
+		}
+	}
+	for _, m := range mappings {
+		if m.Source != source {
+			return errors.New("绑定只能修改选中的控制点位")
+		}
+		kept = append(kept, m)
+	}
+	cfg.Mappings = kept
+	if err = validateControlSimulation(c.Protocol, c.Role, *d, category, cfg); err != nil {
+		return err
+	}
+	if d.Configuration == nil {
+		version := "标准版"
+		if c.Protocol == "modbus-tcp" {
+			version = "TCP版"
+		}
+		if c.Protocol == "modbus-rtu" {
+			version = "标准版(RTU)"
+		}
+		d.Configuration = &DeviceConfiguration{Version: version, Values: map[string]string{}}
+	}
+	if d.Configuration.Controls == nil {
+		d.Configuration.Controls = map[string]ControlSimulation{}
+	}
+	d.Configuration.Controls[category] = cfg
+	// The merged mappings now carry all legacy bindings of this category.
+	if category == "yk" {
+		for i := range d.Points {
+			if controlCategory(dataPointCategory(c.Protocol, d.Points[i])) == category {
+				d.Points[i].Feedback = ""
+			}
+		}
+	}
+	return nil
 }
 func (e *Engine) SaveControlSimulation(channel, device, category string, cfg ControlSimulation) error {
 	return e.saveControlSimulation(channel, device, category, cfg, false)

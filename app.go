@@ -5,9 +5,9 @@ import (
 	"context"
 	"encoding/csv"
 	"errors"
-	"net"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"gytest-go/internal/core"
@@ -15,6 +15,7 @@ import (
 
 type App struct {
 	ctx               context.Context
+	windowReady       sync.Once
 	engine            *core.Engine
 	native            *nativeWindows
 	remote            *nativeRemote
@@ -31,15 +32,19 @@ func (a *App) startup(ctx context.Context) {
 	}
 }
 func (a *App) domReady(ctx context.Context) {
-	if a.remote == nil {
-		runtime.WindowCenter(ctx)
-	} else {
-		makeEditorAccessory()
-		if c, err := a.GetNativeContext(); err == nil && c.Position != nil {
-			runtime.WindowSetPosition(ctx, c.Position.X, c.Position.Y)
+	a.windowReady.Do(func() {
+		if a.remote == nil {
+			runtime.WindowCenter(ctx)
+		} else {
+			makeEditorAccessory()
+			if c, err := a.GetNativeContext(); err == nil && c.Position != nil {
+				runtime.WindowSetPosition(ctx, c.Position.X, c.Position.Y)
+			}
 		}
-	}
+
+	})
 }
+
 func (a *App) shutdown(context.Context) {
 	if a.remote != nil {
 		if a.nativeWatchCancel != nil {
@@ -207,20 +212,7 @@ func (a *App) SendHex(id, text string, crc bool) error { return a.engine.SendHex
 func (a *App) Interrogate(id string) error             { return a.engine.Interrogate(id) }
 func (a *App) SerialPorts() ([]string, error)          { return core.SerialPorts() }
 func (a *App) LocalIPs() ([]string, error) {
-	addresses, err := net.InterfaceAddrs()
-	if err != nil {
-		return nil, err
-	}
-	result := []string{"Any"}
-	seen := map[string]bool{"Any": true}
-	for _, address := range addresses {
-		ip, _, e := net.ParseCIDR(address.String())
-		if e == nil && ip.To4() != nil && !seen[ip.String()] {
-			seen[ip.String()] = true
-			result = append(result, ip.String())
-		}
-	}
-	return result, nil
+	return core.LocalIPv4(), nil
 }
 func (a *App) OpenProject() (string, error) {
 	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{Title: "打开 protocol-simulator 工程", Filters: []runtime.FileFilter{{DisplayName: "protocol-simulator 工程", Pattern: "*.json"}}})

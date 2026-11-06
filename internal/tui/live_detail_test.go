@@ -20,19 +20,19 @@ func TestLivePointDetailTracksTypedAddressUpdatesAndRecoversFromDisconnect(t *te
 	m.detailScroll = 2
 	applyDetail(&m, core.Inspection{Points: []core.Point{{Kind: "holding", Address: 0, Value: 99, Quality: 128}, {Kind: "coil", Address: 0, Value: 7}}})
 	text := detailText(&m)
-	if !strings.Contains(text, `"数值": 99`) || !strings.Contains(text, `"品质": 128`) || m.detailScroll != 2 {
+	if !strings.Contains(text, `数值：99`) || !strings.Contains(text, `品质：128`) || m.detailScroll != 2 {
 		t.Fatal(text, m.detailScroll)
 	}
 	m.apply(update{request: request{socket: m.socket, channel: m.channel, device: m.device, kind: m.pointKind}, err: fmt.Errorf("disconnected")})
-	if !strings.Contains(detailText(&m), "观测连接中断") || strings.Contains(detailText(&m), `"数值"`) {
+	if !strings.Contains(detailText(&m), "观测连接中断") || strings.Contains(detailText(&m), `数值：`) {
 		t.Fatal(detailText(&m))
 	}
 	applyDetail(&m, core.Inspection{Points: []core.Point{{Kind: "holding", Address: 0, Value: 103}}})
-	if !strings.Contains(detailText(&m), `"数值": 103`) {
+	if !strings.Contains(detailText(&m), `数值：103`) {
 		t.Fatal(detailText(&m))
 	}
 	applyDetail(&m, core.Inspection{Points: []core.Point{{Kind: "coil", Address: 0, Value: 17}}})
-	if !strings.Contains(detailText(&m), "所选点位") || strings.Contains(detailText(&m), `"数值": 17`) {
+	if !strings.Contains(detailText(&m), "所选点位") || strings.Contains(detailText(&m), `数值：17`) {
 		t.Fatal(detailText(&m))
 	}
 }
@@ -83,7 +83,7 @@ func TestLiveDetailsDoNotKeepOldValuesWhenDiscoveryReturnsNoProjects(t *testing.
 	m.detail.View.Points = []core.Point{{Kind: "yc", Address: 1, Value: 99}}
 	m.openDetail()
 	m.apply(update{request: request{socket: m.socket, channel: m.channel, device: m.device, kind: m.pointKind}})
-	if m.connected || !strings.Contains(detailText(&m), "观测连接中断") || strings.Contains(detailText(&m), `"数值"`) {
+	if m.connected || !strings.Contains(detailText(&m), "观测连接中断") || strings.Contains(detailText(&m), `数值：`) {
 		t.Fatal(detailText(&m))
 	}
 }

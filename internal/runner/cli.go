@@ -13,12 +13,21 @@ import (
 	"path/filepath"
 	"strings"
 
+	"gytest-go/internal/attribution"
 	"gytest-go/internal/core"
 )
 
 const usage = `prs — protocol-simulator server
 Usage:
   prs tui [--runtime-dir DIR]
+  prs project new PROJECT [--name NAME] [--start]
+  prs project edit --pid PID|--file PROJECT --set name=NAME
+  prs project delete --pid PID
+  prs channel add|edit|delete|start|stop --pid PID [--channel ID] [--set FIELD=VALUE]
+  prs device add|edit|delete --pid PID --channel ID [--device ID] [--set FIELD=VALUE]
+  prs point add|edit|delete --pid PID --channel ID --device ID --kind TYPE --address N [--set FIELD=VALUE]
+  prs rule add|edit|delete --pid PID --channel ID --device ID [--index N] [--set FIELD=VALUE]
+  Channel/device/point/rule add/edit/delete also accepts --file PROJECT for offline edits.
   prs point set|report --pid PID --channel ID --device ID --kind TYPE --address N [--value N] [--quality N] [--json]
   prs version
   prs ports [--json]
@@ -27,7 +36,8 @@ Usage:
                  [--frames FILE --frames-max-mb 10 --frames-files 3] [--watch=false] [--runtime-dir DIR]
 
 run explicitly starts the selected channels. Automatic control/setpoint jobs are
-never started. Existing project files are read-only. Run ./bin/prs from the
+never started. Explicit configuration edits and point set save to JSON; generated values never
+write back. point set --runtime-only changes live values only. Run ./bin/prs from the
 extracted package, or prs after adding its bin directory to PATH.
 `
 
@@ -46,11 +56,17 @@ func projectArguments(args []string) (string, []string) {
 func Execute(ctx context.Context, args []string, out, stderr io.Writer, version string) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		fmt.Fprint(out, usage)
+		fmt.Fprintln(out, attribution.Label())
 		return 0
 	}
 	fail := func(code int, err error) int { fmt.Fprintln(stderr, err); return code }
 	switch args[0] {
+	case "project", "channel", "device", "rule":
+		return configurationCommand(ctx, args[0], args[1:], out, stderr)
 	case "point":
+		if len(args) > 1 && (args[1] == "add" || args[1] == "edit") {
+			return configurationCommand(ctx, "point", args[1:], out, stderr)
+		}
 		return pointCommand(ctx, args[1:], out, stderr)
 	case "tui":
 		fs := flag.NewFlagSet("tui", flag.ContinueOnError)
@@ -203,6 +219,9 @@ func Execute(ctx context.Context, args []string, out, stderr io.Writer, version 
 	}
 }
 func selectChannels(channels []core.Channel, selection string) ([]core.Channel, error) {
+	if selection == "none" {
+		return []core.Channel{}, nil
+	}
 	if selection == "all" {
 		return channels, nil
 	}

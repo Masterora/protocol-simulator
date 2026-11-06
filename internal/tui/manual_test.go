@@ -12,7 +12,7 @@ func editableModel() model {
 }
 func TestPointEditorPatchesOnlyEditedFieldsWhileLiveValuesChange(t *testing.T) {
 	m := editableModel()
-	m.key("e")
+	m.key("v")
 	if m.editor == nil {
 		t.Fatal("no editor")
 	}
@@ -29,18 +29,18 @@ func TestPointEditorPatchesOnlyEditedFieldsWhileLiveValuesChange(t *testing.T) {
 		t.Fatal("queued request vanished")
 	}
 	m.applyManual(manualReply{operation: *m.pendingOperation, result: core.ManualPointResult{Applied: true, Mode: "reported", Receivers: 1}})
-	if m.editor != nil || m.operationBusy || m.paused {
+	if m.editor != nil || m.operationBusy {
 		t.Fatal("manual operation changed lifecycle")
 	}
 }
 func TestEditorCancellationAndInvalidValuesDoNotWrite(t *testing.T) {
 	m := editableModel()
-	m.key("e")
+	m.key("v")
 	m.key("esc")
 	if m.pendingOperation != nil || m.editor != nil {
 		t.Fatal(m)
 	}
-	m.key("e")
+	m.key("v")
 	for _, k := range []string{"-", "enter"} {
 		m.key(k)
 	}
@@ -54,25 +54,24 @@ func TestEditorCancellationAndInvalidValuesDoNotWrite(t *testing.T) {
 	}
 	m.key("esc")
 	m.detail.PointOperations = false
-	m.key("e")
+	m.key("v")
 	if m.editor != nil || m.pendingOperation != nil {
 		t.Fatal("old backend accepts writes")
 	}
 }
-func TestPointSummaryIsOnlyPresentForSearchAndPaginationStaysAtBottom(t *testing.T) {
+func TestPointSummaryAndPaginationCountsAreHiddenWhenSearching(t *testing.T) {
 	m := editableModel()
 	for _, filter := range []string{"", "Voltage"} {
 		m.filter = filter
 		plain := stripStyles(m.render(150, 30))
 		lines := strings.Split(plain, "\r\n")
-		if strings.Contains(plain, "装置总计") || strings.Contains(plain, "点位 1-") {
-			t.Fatal(plain)
+		for _, retired := range []string{"装置总计", "点位 1-", "匹配", "1-1 / 1", "点位 ["} {
+			if strings.Contains(plain, retired) {
+				t.Fatal(retired, plain)
+			}
 		}
-		if strings.Contains(plain, "匹配") != (filter != "") {
-			t.Fatal(plain)
-		}
-		if !strings.Contains(lines[len(lines)-3], "1-1 / 1") {
-			t.Fatal("pagination moved", plain)
+		if !strings.HasPrefix(lines[4], "┌ 点位 ") || !strings.HasPrefix(lines[6], "│› 1 ") {
+			t.Fatal("unlabelled row number or table moved", plain)
 		}
 	}
 }
@@ -80,7 +79,7 @@ func TestPointSummaryIsOnlyPresentForSearchAndPaginationStaysAtBottom(t *testing
 func TestEditorRejectsNegativeQualityAndUnparseableTextRatherThanDroppingCharacters(t *testing.T) {
 	for _, text := range []string{"-1", "abc123", "品质128"} {
 		m := editableModel()
-		m.key("e")
+		m.key("v")
 		m.key("tab")
 		for _, r := range text {
 			m.key(string(r))
@@ -91,7 +90,7 @@ func TestEditorRejectsNegativeQualityAndUnparseableTextRatherThanDroppingCharact
 		}
 	}
 	m := editableModel()
-	m.key("e")
+	m.key("v")
 	m.key("中")
 	m.key("backspace")
 	if m.editor.values[0] != "" {

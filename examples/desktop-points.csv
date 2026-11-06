@@ -1,0 +1,5 @@
+kind,address,name,value,quality,wireType
+yx,1,开关位置,0,0,1
+yc,16385,母线电压,220.5,0,13
+yk,24577,开关遥控,0,0,45
+yt,24833,电压设定,220,0,50

@@ -66,7 +66,7 @@ func TestReadOnlyObserverBoundsPagesHistoryAndLifecycle(t *testing.T) {
 		server.Log("INFO", "event", i)
 	}
 	result, err = Fetch(context.Background(), server.Socket(), "/v1/view?logAfter=1")
-	if err != nil || len(result.Logs) > 100 || result.LogSequence != 1000 || result.LogMissed == 0 {
+	if err != nil || len(result.Logs) != 100 || result.LogSequence != 1000 || result.Logs[0].Sequence != 901 {
 		t.Fatal(result, err)
 	}
 	conn, err := net.Dial("unix", server.Socket())

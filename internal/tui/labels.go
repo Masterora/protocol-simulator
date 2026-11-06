@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 )
 
 func translated(value string, labels map[string]string) string {
@@ -17,14 +18,50 @@ func translated(value string, labels map[string]string) string {
 	return value
 }
 
-var stateLabels = map[string]string{"running": "运行中", "stopped": "已停止", "paused": "已暂停", "listening": "监听中", "connecting": "连接中", "connected": "已连接", "disconnected": "已断开", "error": "异常", "waiting": "等待中", "": "未启动"}
+var stateLabels = map[string]string{"disabled": "已停用", "running": "运行中", "stopped": "已停止", "paused": "已暂停", "listening": "监听中", "connecting": "连接中", "connected": "已连接", "disconnected": "已断开", "error": "异常", "waiting": "等待中", "": "未启动"}
+var transportLabels = map[string]string{"tcp-server": "TCP Server", "tcp-client": "TCP Client", "serial": "串口", "udp": "UDP", "": "—"}
+
+func addressLabel(transport string) string {
+	switch transport {
+	case "tcp-server":
+		return "监听地址"
+	case "tcp-client", "udp":
+		return "目标地址"
+	case "serial":
+		return "串口路径"
+	default:
+		return "地址"
+	}
+}
+
+var roleLabels = map[string]string{"server": "子站", "client": "主站", "": "—"}
 var kindLabels = map[string]string{"yx": "遥信", "yc": "遥测", "yk": "遥控", "yt": "遥调", "mc": "累计量", "position": "步位置", "step": "步调节", "coil": "线圈", "discrete": "离散输入", "holding": "保持寄存器", "input": "输入寄存器", "raw": "原始数据"}
 var modeLabels = map[string]string{"fixed": "固定", "random": "随机", "increment": "递增", "toggle": "翻转", "sequence": "序列", "report": "仅上报", "normal": "正常应答", "deny": "拒绝应答", "silent": "不应答"}
 var levelLabels = map[string]string{"INFO": "信息", "WARN": "警告", "ERROR": "错误", "DEBUG": "调试", "TRACE": "跟踪"}
 var directionLabels = map[string]string{"RX": "接收", "TX": "发送", "SYS": "系统"}
-var eventLabels = map[string]string{"point_set": "手动修改点值", "point_report": "手动上报点位", "observer_ready": "观测接口已就绪", "observer_unavailable": "观测接口不可用", "starting": "工程正在启动", "running": "工程正在运行", "stopped": "工程已停止", "runtime_failure": "工程运行失败", "channel_state": "通道状态变化", "data_rules_started": "自动上报已启动", "protocol": "通信事件", "reloaded": "配置已热加载", "reload_rejected": "配置变更已拒绝", "reload_rolled_back": "配置变更已回退", "protocol_log_records_dropped": "部分报文日志已跳过", "log_records_dropped": "部分运行日志已跳过"}
+var eventLabels = map[string]string{
+	"rule_state":                   "规则任务状态变化",
+	"point_set":                    "手动修改点值",
+	"point_report":                 "手动上报点位",
+	"observer_ready":               "观测接口已就绪",
+	"observer_unavailable":         "观测接口不可用",
+	"starting":                     "工程正在启动",
+	"running":                      "工程正在运行",
+	"stopped":                      "工程已停止",
+	"runtime_failure":              "工程运行失败",
+	"channel_state":                "通道状态变化",
+	"data_rules_started":           "自动上报已启动",
+	"protocol":                     "通信事件",
+	"reloaded":                     "配置已热加载",
+	"reload_rejected":              "配置变更已拒绝",
+	"reload_rolled_back":           "配置变更已回退",
+	"protocol_log_records_dropped": "部分报文日志已跳过",
+	"log_records_dropped":          "部分运行日志已跳过",
+	"configuration_saved":          "配置已保存",
+	"project_deleted":              "工程已删除",
+}
 var detailLabels = map[string]string{
-	"pid": "进程号", "project": "工程", "configuration": "配置文件", "started": "启动时间", "channels": "通道列表", "id": "标识", "name": "名称", "protocol": "协议", "role": "角色", "address": "地址", "devices": "装置数", "state": "通道状态", "status": "状态", "tx": "发送量", "rx": "接收量", "peers": "连接数", "readyPeers": "已就绪连接数", "lastError": "最近错误", "unit": "站号", "commonAddress": "公共地址", "points": "点位", "kind": "类型", "value": "数值", "quality": "品质", "wireType": "报文类型", "dataType": "数据类型", "byteOrder": "字节序", "tab": "分类", "timestamp": "点位时间", "timeInvalid": "时间无效", "updated": "更新时间", "feedback": "反馈", "cycles": "执行次数", "rule": "规则", "enabled": "启用", "cause": "传送原因", "start": "起始地址", "end": "结束地址", "intervalMs": "周期（毫秒）", "mode": "模式", "min": "最小值", "max": "最大值", "step": "步长", "sequence": "序号", "time": "时间", "direction": "方向", "channel": "通道标识", "peer": "对端", "summary": "摘要", "level": "级别", "message": "事件", "fields": "字段", "rawFields": "原始字段", "eventCode": "事件标识",
+	"pid": "进程号", "project": "工程", "configuration": "配置文件", "started": "启动时间", "channels": "通道列表", "id": "标识", "name": "名称", "protocol": "协议", "role": "角色", "transport": "连接方式", "localAddress": "本地绑定", "address": "地址", "devices": "装置数", "state": "通道状态", "status": "状态", "tx": "发送量", "rx": "接收量", "peers": "连接数", "readyPeers": "已就绪连接数", "lastError": "最近错误", "unit": "站号", "commonAddress": "公共地址", "points": "点位", "kind": "类型", "value": "数值", "quality": "品质", "wireType": "报文类型", "dataType": "数据类型", "byteOrder": "字节序", "tab": "分类", "timestamp": "点位时间", "timeInvalid": "时间无效", "updated": "更新时间", "communicationAt": "上报时间", "feedback": "反馈", "cycles": "执行次数", "rule": "规则", "enabled": "启用", "cause": "传送原因", "start": "起始点位", "end": "结束点位", "intervalMs": "周期（毫秒）", "mode": "模式", "min": "最小值", "max": "最大值", "step": "步长", "sequence": "序号", "time": "时间", "direction": "方向", "channel": "通道标识", "peer": "对端", "summary": "摘要", "level": "级别", "message": "事件", "fields": "字段", "rawFields": "原始字段", "eventCode": "事件标识",
 }
 
 func localizedDetail(value any, key string) any {
@@ -32,7 +69,19 @@ func localizedDetail(value any, key string) any {
 	case map[string]any:
 		out := make(map[string]any, len(v))
 		for k, child := range v {
-			out[translated(k, detailLabels)] = localizedDetail(child, k)
+			label := translated(k, detailLabels)
+			if transport, ok := v["transport"].(string); ok {
+				if k == "address" {
+					label = addressLabel(transport)
+				}
+				if k == "localAddress" {
+					label = "本地绑定"
+					if transport == "udp" {
+						label = "监听地址"
+					}
+				}
+			}
+			out[label] = localizedDetail(child, k)
 		}
 		return out
 	case []any:
@@ -49,8 +98,10 @@ func localizedDetail(value any, key string) any {
 			return translated(v, kindLabels)
 		case "mode":
 			return translated(v, modeLabels)
+		case "transport":
+			return translated(v, transportLabels)
 		case "role":
-			return translated(v, map[string]string{"server": "子站", "client": "主站"})
+			return translated(v, roleLabels)
 		case "direction":
 			return translated(v, directionLabels)
 		case "level":
@@ -103,8 +154,20 @@ var channelLog = regexp.MustCompile(`^\[channel (\S+) status (\S+) peers (\d+) r
 var dataLog = regexp.MustCompile(`^\[channel (\S+) device (\S+) started (\d+)\]$`)
 var protocolLog = regexp.MustCompile(`^\[sequence (\d+) channel (\S+) peer (.*?) direction (RX|TX|SYS) summary (.*)\]$`)
 
+var configurationSavedLog = regexp.MustCompile(`^\[resource (\S+) action (\S+) path (.+) revision [0-9a-f]{64}\]$`)
+var configurationResources = map[string]string{"project": "工程", "channel": "通道", "device": "装置", "point": "点位", "rule": "规则", "binding": "绑定"}
+var configurationActions = map[string]string{"add": "新增", "edit": "编辑", "delete": "删除"}
+
 func logFields(event, raw string) string {
 	switch event {
+	case "configuration_saved":
+		if fields := configurationSavedLog.FindStringSubmatch(raw); fields != nil {
+			return translated(fields[2], configurationActions) + translated(fields[1], configurationResources) + " · " + fields[3]
+		}
+	case "project_deleted":
+		if path, ok := strings.CutPrefix(raw, "[path "); ok {
+			return strings.TrimSuffix(path, "]")
+		}
 	case "channel_state":
 		if m := channelLog.FindStringSubmatch(raw); m != nil {
 			return fmt.Sprintf("通道 %s · %s · 连接 %s · 已就绪 %s%s", m[1], translated(m[2], stateLabels), m[3], m[4], func() string {
@@ -133,4 +196,13 @@ func logFields(event, raw string) string {
 	}
 	// Keep the exact, potentially unstructured diagnostic payload in row details.
 	return "—"
+}
+
+// Use the terminal process timezone, even for timestamps recorded in UTC.
+func formatPointTime(stamp, layout string) string {
+	t, err := time.Parse(time.RFC3339Nano, stamp)
+	if err != nil {
+		return "—"
+	}
+	return t.Local().Format(layout)
 }

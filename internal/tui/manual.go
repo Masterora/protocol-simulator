@@ -86,6 +86,9 @@ func (m *model) beginPointEdit() {
 	if !ok {
 		return
 	}
+	persist := m.detail.ConfigurationOperations
+	operation.request.Persist = &persist
+	operation.request.Revision = m.detail.ConfigurationRevision
 	m.editor = &pointEditor{operation: operation, name: p.Name, values: [2]string{strconv.FormatFloat(p.Value, 'g', -1, 64), fmt.Sprint(p.Quality)}, replace: [2]bool{true, true}}
 }
 func (m *model) reportPoint() {
@@ -102,10 +105,39 @@ func (m *model) editKey(key string) {
 	}
 	i := e.focus
 	switch key {
+	case " ", "left", "right":
+		choices := m.manualChoices(i)
+		if len(choices) == 0 {
+			return
+		}
+		apply := func(v string) { e.values[i] = v; e.dirty[i] = true; e.replace[i] = true; e.error = "" }
+		if key == " " {
+			label := "数值"
+			field := "value"
+			if i == 1 {
+				label = "品质"
+				field = "quality"
+			}
+			m.openChoices(label, field, e.values[i], choices, apply)
+			return
+		}
+		j := 0
+		for n, v := range choices {
+			if v == e.values[i] {
+				j = n
+				break
+			}
+		}
+		step := 1
+		if key == "left" {
+			step = -1
+		}
+		apply(choices[(j+len(choices)+step)%len(choices)])
+		return
 	case "esc":
 		m.editor = nil
 		return
-	case "tab", "down", "up":
+	case "tab", "down", "up", "shift-tab":
 		e.focus = 1 - e.focus
 		e.replace[e.focus] = true
 		return
@@ -200,16 +232,21 @@ func (m *model) applyManual(reply manualReply) {
 		return
 	}
 	m.editor = nil
+	prefix := ""
+	if result.Saved {
+		prefix = "配置已保存；"
+		m.detail.ConfigurationRevision = result.Revision
+	}
 	switch result.Mode {
 	case "reported":
-		m.setOperationNotice(fmt.Sprintf("已上报 %d 个连接", result.Receivers))
+		m.setOperationNotice(prefix + "已上报")
 	case "offline":
-		m.setOperationNotice("已修改运行值；连接未激活，未上报")
+		m.setOperationNotice(prefix + "已修改运行值；连接未激活，未上报")
 	case "polled":
-		m.setOperationNotice("已修改运行值，主站下次读取生效")
+		m.setOperationNotice(prefix + "已修改运行值，主站下次读取生效")
 	}
 }
-func (m *model) editorBody() []string {
+func (m *model) editorBody(width int) []string {
 	e := m.editor
 	if e == nil {
 		return nil
@@ -220,20 +257,33 @@ func (m *model) editorBody() []string {
 		if i == e.focus {
 			prefix = "› "
 		}
-		fields[i] = prefix + label + "  " + e.values[i]
+		value := e.values[i]
+		if len(m.manualChoices(i)) > 0 {
+			field := "value"
+			if i == 1 {
+				field = "quality"
+			}
+			value = "‹ " + choiceLabel(field, value) + " ›"
+		}
+		fields[i] = prefix + label + "  " + clipped(value, min(width-7, 108)-12, i == e.focus)
 	}
-	lines := fields
+	target := clipped(fmt.Sprintf("%s · %s:%d", e.name, translated(e.operation.request.Kind, kindLabels), e.operation.request.Address), min(width-7, 108)-4, false)
+	lines := append([]string{target}, fields...)
 	if e.error != "" {
-		lines = []string{e.error, fields[e.focus], fields[1-e.focus]}
+		lines = []string{target, clipped(e.error, min(width-7, 108)-4, false), fields[e.focus], fields[1-e.focus]}
 	}
-	lines = append(lines, "", fmt.Sprintf("%s · %s:%d", e.name, translated(e.operation.request.Kind, kindLabels), e.operation.request.Address))
 	for _, p := range m.detail.View.Points {
 		if p.Kind == e.operation.request.Kind && p.Address == e.operation.request.Address {
 			lines = append(lines, fmt.Sprintf("当前值 %g · 品质 %d", p.Value, p.Quality))
 			break
 		}
 	}
-	lines = append(lines, "", "输入替换当前字段；Tab 或 ↑↓ 切换字段。", "自动规则继续运行，新值按实际变化同步。")
+	lines = append(lines, "", "空格打开选项；Tab/Shift+Tab 或 ↑↓ 切换字段。", "自动规则继续运行，新值按实际变化同步。")
+	if e.operation.request.Persist != nil && *e.operation.request.Persist {
+		lines = append(lines, "显式修改同时保存到工程 JSON。")
+	} else {
+		lines = append(lines, "旧服务仅修改运行值，不保存配置文件。")
+	}
 	if m.operationBusy {
 		lines = append([]string{"正在提交，请等待实际结果…"}, lines...)
 	}
@@ -259,4 +309,24 @@ func (m *model) pointOperationsAvailable() (bool, bool) {
 		}
 	}
 	return false, false
+}
+
+func (m *model) manualChoices(field int) []string {
+	if field == 1 {
+		return qualityChoices()
+	}
+	p, ok := m.selectedPoint()
+	if !ok {
+		return nil
+	}
+	switch p.Kind {
+	case "yx":
+		if p.WireType == 3 || p.WireType == 31 {
+			return []string{"0", "1", "2", "3"}
+		}
+		return []string{"0", "1"}
+	case "coil", "discrete":
+		return []string{"0", "1"}
+	}
+	return nil
 }

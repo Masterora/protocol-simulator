@@ -1,11 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 const { Window } = await import(process.env.GYLAB_DOM_MODULE || 'happy-dom');
 const html = (await readFile(new URL('../frontend/index.html', import.meta.url), 'utf8'))
   .replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '')
   .replace(/<link\b[^>]*>/g, '');
 const code = await readFile(new URL('../frontend/app.js', import.meta.url), 'utf8');
+const featureCode = await readFile(
+  new URL('../frontend/desktop-features.js', import.meta.url),
+  'utf8',
+);
 const formCode = await readFile(new URL('../frontend/forms.js', import.meta.url), 'utf8');
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 // happy-dom implements button activation through requestSubmit internally;
@@ -164,6 +169,60 @@ function dataState() {
     lastError: '',
   };
 }
+test('desktop data task pause and resume are independent of message display pause', async () => {
+  for (const protocol of ['iec104', 'modbus-tcp']) {
+    const c = dataServer(protocol),
+      view = { ...dataState(), config: { rules: configuredDataRules(protocol) } };
+    const h = await setup(
+      {
+        project: { name: 'task controls', channels: [c] },
+        states: [{ id: c.id, status: 'connected', peers: 1, readyPeers: 1 }],
+      },
+      null,
+      {
+        GetDataTest: () => structuredClone(view),
+        StartDataTest: () => {
+          view.status = 'running';
+          return structuredClone(view);
+        },
+        SetDataTestState: (ch, device, scope, action) => {
+          assert.deepEqual([ch, device, scope], ['data', 'target', 'telemetry']);
+          view.status = { pause: 'paused', resume: 'running', stop: 'stopped' }[action];
+          assert.ok(view.status);
+          return structuredClone(view);
+        },
+      },
+    );
+    try {
+      h.w.document.querySelector('[data-mode=server]').click();
+      await settleInline();
+      h.$('runtime-data-run').click();
+      await settleInline();
+      assert.equal(h.$('runtime-data-pause').hidden, false);
+      h.$('pause-messages').click();
+      await tick();
+      h.$('runtime-data-pause').click();
+      await settleInline();
+      assert.equal(view.status, 'paused');
+      assert.equal(h.$('runtime-data-pause').textContent, '恢复任务');
+      assert.equal(h.$('pause-messages').textContent, '继续');
+      h.$('runtime-data-pause').click();
+      await settleInline();
+      assert.equal(view.status, 'running');
+      assert.equal(h.$('runtime-data-pause').textContent, '暂停任务');
+      h.$('runtime-data-run').click();
+      await settleInline();
+      assert.equal(view.status, 'stopped');
+      assert.equal(h.$('runtime-data-pause').hidden, true);
+      assert.equal(
+        h.calls.some((call) => call[0] === 'SaveDataTest'),
+        false,
+      );
+    } finally {
+      await h.close();
+    }
+  }
+});
 function configuredDataRules(protocol = 'iec104') {
   return (protocol === 'iec104' ? ['yc', 'yx'] : ['holding']).map((kind) => ({
     enabled: true,
@@ -717,9 +776,26 @@ test('UDP exposes remote and local ports and disables TCP local-assignment optio
     const config = h.calls.find((c) => c[0] === 'UpdateTransport')[1][0];
     assert.equal(config.transport, 'udp');
     assert.equal(config.address, '127.0.0.1:19101');
-    assert.equal(config.localAddress, '0.0.0.0:19102');
+    assert.equal(config.localAddress, '127.0.0.1:19102');
   } finally {
     await h.close();
+  }
+});
+test('new server channels bind an explicit interface address with loopback fallback', async () => {
+  for (const ips of [['192.0.2.44', '127.0.0.1'], null]) {
+    const h = await setup({}, null, { LocalIPs: () => ips });
+    try {
+      h.w.document.querySelector('[data-mode=server]').click();
+      await tick();
+      h.$('add-channel').click();
+      await tick();
+      await tick();
+      const call = h.calls.find((c) => c[0] === 'UpsertChannel');
+      assert.ok(call);
+      assert.equal(call[1][0].address, (ips ? ips[0] : '127.0.0.1') + ':2404');
+    } finally {
+      await h.close();
+    }
   }
 });
 test('communication keeps inactive endpoints and accepts Any when changing network roles', async () => {
@@ -942,7 +1018,11 @@ async function setup(config = {}, nativeContext = null, initialOverrides = {}) {
     settings: { disableCSSFileLoading: true, disableJavaScriptFileLoading: true },
   });
   w.structuredClone = structuredClone;
-  w.setInterval = () => 0;
+  const intervals = [];
+  w.setInterval = (callback) => {
+    intervals.push(callback);
+    return intervals.length;
+  };
   w.setTimeout = () => 0;
   w.fetch = () => {
     throw Error('Network forbidden in unit tests');
@@ -984,11 +1064,13 @@ async function setup(config = {}, nativeContext = null, initialOverrides = {}) {
     },
   };
   w.eval(formCode);
+  w.eval(featureCode);
   w.eval(code);
   await tick();
   await w.eval('refresh()');
   return {
     w,
+    intervals,
     state,
     calls,
     overrides,
@@ -1551,7 +1633,7 @@ test('removing the last device clears its table and disables device operations',
     h.state.project.channels[0].devices = [];
     await h.refresh();
     assert.equal(h.$('point-rows').children.length, 0);
-    assert.equal(h.$('device-config').disabled, true);
+    assert.equal(h.w.document.querySelector('#device-list [data-device]'), null);
     assert.equal(h.$('add-point'), null);
     assert.equal(h.$('read-modbus').disabled, true);
     assert.equal(h.$('add-device').disabled, false);
@@ -1641,7 +1723,7 @@ test('unused device address fields cannot block form validation', async () => {
   c.devices[0].commonAddress = 0;
   const h = await setup({ project: { name: 'fields', channels: [c] } });
   try {
-    h.$('device-config').click();
+    openDeviceEditor(h);
     assert.equal(h.$('device-form').checkValidity(), true);
     h.$('device-dialog').close();
     h.state.states[0].status = 'stopped';
@@ -2017,7 +2099,7 @@ test('read-only device confirmation does not regenerate imported control points'
   const c = iecChannel('a', [{ kind: 'yt', address: 123, value: 42, quality: 0 }]);
   const h = await setup({ project: { name: 'controls', channels: [c] } });
   try {
-    h.$('device-config').click();
+    openDeviceEditor(h);
     h.$('device-form').requestSubmit(h.$('device-form').querySelector('button[type=submit]'));
     for (let i = 0; i < 3; i++) await tick();
     assert.equal(
@@ -2669,7 +2751,7 @@ test('navigation separators resize by keyboard and pointer, restore half height 
     await h.close();
   }
 });
-test('point grid contains five editable columns without row operation buttons and client commits locally', async () => {
+test('point grid omits the wire code and client commits the numeric value locally', async () => {
   const h = await setup({
     project: {
       name: 'client',
@@ -2679,9 +2761,12 @@ test('point grid contains five editable columns without row operation buttons an
     },
   });
   try {
-    assert.equal(h.w.document.querySelectorAll('.point-table th').length, 5);
+    assert.deepEqual(
+      [...h.w.document.querySelectorAll('.point-table th')].map((e) => e.textContent),
+      ['点位', '值', '品质', '上报时间', '描述'],
+    );
     assert.equal(h.$('point-rows').querySelectorAll('button').length, 0);
-    assert.equal(h.$('point-rows').querySelectorAll('.point-cell-input').length, 5);
+    assert.equal(h.$('point-rows').querySelectorAll('.point-cell-input').length, 4);
     h.overrides.EditPointCell = (channel, device, key, field, patch) => {
       Object.assign(h.state.project.channels[0].devices[0].points[0], patch);
       return { mode: 'stored' };
@@ -2703,12 +2788,12 @@ test('point grid contains five editable columns without row operation buttons an
     await h.close();
   }
 });
-test('hexadecimal telemetry edits use IEEE float values and invalid quality stays uncommitted', async () => {
+test('numeric telemetry edits retain fractional values and invalid quality stays uncommitted', async () => {
   const h = await setupInline();
   try {
-    const hex = h.w.document.querySelector('[data-point-field="hex"]');
-    editInline(h, hex, '41480000');
-    inlineKey(h, hex, 'Enter');
+    const value = h.w.document.querySelector('[data-point-field="value"]');
+    editInline(h, value, '12.5');
+    inlineKey(h, value, 'Enter');
     await settleInline();
     assert.equal(h.calls.find((c) => c[0] === 'SetPointValue')[1][3], 12.5);
     const quality = h.w.document.querySelector('[data-point-field="quality"]');
@@ -3272,7 +3357,7 @@ test('editing an existing device saves real parameters once without connecting a
   ];
   const h = await setup({ project: { name: 'edit', channels: [c] } });
   try {
-    h.$('device-config').click();
+    openDeviceEditor(h);
     const field = originalField(h, 'txtTotal_Time');
     assert.equal(field.disabled, false);
     field.value = '15';
@@ -3335,7 +3420,7 @@ test('SOE and COS show device timestamps and invalid quality then clear only the
     await h.close();
   }
 });
-test('typed registers edit signed and floating values with wire-order hexadecimal roundtrips', async () => {
+test('typed registers display signed and floating values directly', async () => {
   const c = channel('a', [
     { kind: 'holding', address: 0, value: -123, dataType: 'int16', byteOrder: 'BA', quality: 0 },
     {
@@ -3350,9 +3435,9 @@ test('typed registers edit signed and floating values with wire-order hexadecima
   const h = await setup({ project: { name: 'typed', channels: [c] } });
   try {
     const rows = h.$('point-rows').children;
-    assert.equal(rows[0].children[1].querySelector('input').value, '85FF');
-    assert.equal(rows[1].children[1].querySelector('input').value, '4148');
-    const input = rows[0].children[2].querySelector('input');
+    const input = rows[0].querySelector('[data-point-field=value]');
+    assert.equal(input.value, '-123');
+    assert.equal(rows[1].querySelector('[data-point-field=value]').value, '12.5');
     input.value = '-32768';
     input.dispatchEvent(new h.w.Event('input'));
     input.dispatchEvent(new h.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -3402,7 +3487,7 @@ test('legacy configuration edits keep absent pulse counts at zero and typed poin
   ];
   const h = await setup({ project: { name: 'old', channels: [c] } });
   try {
-    h.$('device-config').click();
+    openDeviceEditor(h);
     assert.equal(originalField(h, 'txtMC_Num'), null);
     assert.equal(
       h.w
@@ -3672,7 +3757,7 @@ test('shrinking point ranges confirms deletion without a permanent preview and c
   ];
   const h = await setup({ project: { name: 'preview', channels: [c] } });
   try {
-    h.$('device-config').click();
+    openDeviceEditor(h);
     originalField(h, 'txtYX_Num').value = '1';
     originalField(h, 'txtYX_Num').dispatchEvent(new h.w.Event('input', { bubbles: true }));
     assert.equal(h.$('device-point-summary'), null);
@@ -3745,7 +3830,7 @@ test('four tabs hide legacy categories while device saves retain imported ranges
       [...h.$('point-tabs').children].map((b) => b.textContent).sort(),
       ['遥信', '遥控', '遥测', '遥调'].sort(),
     );
-    h.$('device-config').click();
+    openDeviceEditor(h);
     const config = h.w.eval('configurationFromPanel')('iec104');
     assert.equal(config.values.mcEnable, 'true');
     assert.equal(config.ranges.find((r) => r.tab === 'mc').count, 1);
@@ -3843,7 +3928,7 @@ test('editing a legacy device keeps range ordering so settings changes preserve 
   ];
   const h = await setup({ project: { name: 'sparse', channels: [c] } });
   try {
-    h.$('device-config').click();
+    openDeviceEditor(h);
     originalField(h, 'txtUTest_Time').value = '30';
     const config = h.w.eval('configurationFromPanel')('iec104');
     assert.deepEqual(
@@ -3896,10 +3981,7 @@ test('four-remote server control pages save independent policies and mappings of
         ['yt', '250'],
       ]) {
         h.w.document.querySelector('[data-point-kind=' + category + ']').click();
-        assert.equal(
-          h.$('open-remote-config').textContent,
-          category === 'yk' ? '遥控配置' : '遥调配置',
-        );
+        assert.equal(h.$('open-remote-config').textContent, '绑定点位');
         h.$('open-remote-config').click();
         await settleInline();
         h.$('remote-delay').value = delay;
@@ -4336,8 +4418,8 @@ test('explicit new telemetry rules fit all IEC104 formats including untagged leg
       assert.equal(get('min').value, '0');
       assert.equal(Number(get('max').value), normalized ? 0.9 : 100);
       assert.equal(Number(get('step').value), normalized ? 0.1 : 1);
-      assert.equal(get('min').getAttribute('aria-label'), '下限');
-      assert.equal(h.$('auto-data-dialog').querySelectorAll('th')[5].textContent, '下限');
+      assert.equal(get('min').getAttribute('aria-label'), '下限 / 固定值');
+      assert.equal(h.$('auto-data-dialog').querySelectorAll('th')[5].textContent, '下限 / 固定值');
       assert.equal(h.$('auto-data-start'), null);
       h.$('auto-data-save').click();
       await settleInline();
@@ -4753,10 +4835,10 @@ test('server command pages show bound telemetry and keep received values read-on
       assert.equal(row.querySelector('[data-point-field=value]'), null);
       assert.equal(row.querySelector('[data-point-field=hex]'), null);
       assert.equal(row.querySelector('[data-point-field=quality]'), null);
-      assert.equal(row.children.length, 4);
+      assert.equal(row.children.length, 5);
       assert.deepEqual(
         [...h.w.document.querySelectorAll('.point-table th')].map((e) => e.textContent),
-        ['点位', category === 'yk' ? '绑定遥信' : '绑定遥测', '下发值', '描述'],
+        ['点位', '绑定点位', '下发值', '上报时间', '描述'],
       );
       assert.equal(row.children[1].textContent, target);
       row.children[1].querySelector('button').click();
@@ -4770,7 +4852,8 @@ test('server command pages show bound telemetry and keep received values read-on
       c.devices[0].configuration.controls[category].mappings = [];
       await h.refresh();
       const blank = h.$('point-rows').firstElementChild.children[1];
-      assert.equal(blank.textContent, '');
+      assert.equal(blank.textContent, '绑定点位');
+      assert.equal(h.$('open-remote-config').textContent, '绑定点位');
       assert.ok(blank.querySelector('button').getAttribute('aria-label'));
       blank.querySelector('button').click();
       await settleInline();
@@ -4790,7 +4873,7 @@ test('server command pages show bound telemetry and keep received values read-on
   }
 });
 
-test('client control tables retain point value and description without telemetry-only fields', async () => {
+test('client control tables show read-only bindings and retain editable point values', async () => {
   const c = iecChannel('a', [
     { kind: 'yk', address: 24577, value: 0, name: 'switch' },
     { kind: 'yt', address: 26113, value: 0, name: 'setpoint' },
@@ -4800,13 +4883,16 @@ test('client control tables retain point value and description without telemetry
     for (const category of ['yk', 'yt']) {
       h.w.document.querySelector('[data-point-kind=' + category + ']').click();
       const row = h.$('point-rows').firstElementChild;
-      assert.equal(row.children.length, 3);
+      assert.equal(row.children.length, 5);
+      const binding = row.querySelector('[data-point-column=binding]');
+      assert.equal(binding.textContent, '—');
+      assert.equal(binding.querySelector('button'), null);
       assert.equal(row.querySelector('[data-point-field=hex]'), null);
       assert.equal(row.querySelector('[data-point-field=quality]'), null);
       assert.ok(row.querySelector('[data-point-field=value]'));
       assert.deepEqual(
         [...h.w.document.querySelectorAll('.point-table th')].map((e) => e.textContent),
-        ['点位', '值 / 状态', '描述'],
+        ['点位', '绑定点位', '值', '上报时间', '描述'],
       );
     }
   } finally {
@@ -4891,7 +4977,7 @@ test('binding buttons retain focus across unrelated changes and target their own
     h.w.document.querySelector('[data-mode=server]').click();
     h.w.document.querySelector('[data-point-kind=yk]').click();
     const button = h.$('point-rows').children[1].querySelector('button');
-    assert.equal(button.textContent, '');
+    assert.equal(button.textContent, '绑定点位');
     assert.equal(button.getAttribute('aria-label'), '绑定遥信 24578');
     button.focus();
     h.state.project.channels[0].devices[0].points[0].value = 3;
@@ -5119,7 +5205,7 @@ test('automatic data keeps one run toggle without status or point-update buttons
         h.w.document.querySelector('[data-point-kind=' + kind + ']').click();
         await h.refresh();
         assert.equal(h.$('runtime-data-status'), null);
-        assert.equal(h.w.document.querySelectorAll('.runtime-actions button').length, 1);
+        assert.equal(h.w.document.querySelectorAll('.runtime-actions button').length, 2);
         assert.ok(h.$('open-auto-data'));
       }
       h.$('runtime-data-run').click();
@@ -5425,7 +5511,7 @@ test('advanced fields keep exact defaults and reveal validation failures without
     },
   });
   try {
-    h.$('device-config').click();
+    openDeviceEditor(h);
     const panel = h.$('original-device-panel'),
       advanced = panel.querySelector('details');
     assert.ok(advanced);
@@ -5564,7 +5650,7 @@ test('collapsed advanced device values survive an unchanged save and cancel', as
   ];
   const h = await setup({ project: { name: 'advanced', channels: [c] } });
   try {
-    h.$('device-config').click();
+    openDeviceEditor(h);
     const advanced = h.$('original-device-panel').querySelector('details');
     assert.equal(advanced.open, false);
     for (const [id, value] of [
@@ -5881,7 +5967,7 @@ test('float default preserves explicitly selected telemetry formats and existing
     h.w.document.querySelector('[data-mode=server]').click();
     await settleInline();
     const before = JSON.stringify(h.state.project);
-    h.$('device-config').click();
+    openDeviceEditor(h);
     assert.equal(originalField(h, 'cbYC_Type').value, '带品质归一化(type:9)');
     h.$('device-dialog').close();
     assert.equal(JSON.stringify(h.state.project), before);
@@ -5969,5 +6055,1136 @@ test('maximum 10000-point four-remote table traverses every page with sorted poi
     );
   } finally {
     await h.close();
+  }
+});
+
+test('runtime credit remains visible in both workspace modes without a plaintext source literal', async () => {
+  const h = await setup();
+  try {
+    const credit = h.w.document.querySelector('.status-mark > span').textContent;
+    assert.equal(
+      createHash('sha256').update(credit).digest('hex'),
+      'ae980968b057223bdd51fe3a905ca15430f8efd87af00d433042704e6281ff17',
+    );
+    assert.ok(!html.includes(credit));
+    assert.ok(!code.includes(credit));
+    assert.equal(h.w.document.querySelector('.status-symbol').textContent, '🍊');
+    h.w.document.querySelector('[data-mode=server]').click();
+    await tick();
+    assert.equal(h.w.document.querySelector('.status-mark > span').textContent, credit);
+    assert.ok(!h.w.document.querySelector('.status-mark').hidden);
+  } finally {
+    await h.close();
+  }
+});
+
+test('status decoration recovers deletion, rewriting and inline hiding without touching communication', async () => {
+  const h = await setup();
+  try {
+    const footer = h.w.document.querySelector('footer.replica-status'),
+      mark = footer.querySelector('.status-mark'),
+      expected = mark.textContent,
+      field = h.w.document.createElement('input');
+    h.w.document.body.append(field);
+    field.value = 'CAFE';
+    field.focus();
+    h.calls.length = 0;
+    for (const mutate of [
+      () => mark.remove(),
+      () => {
+        mark.textContent = '';
+      },
+      () => {
+        mark.firstChild.textContent = 'changed';
+      },
+      () => {
+        mark.hidden = true;
+        mark.style.display = 'none';
+        mark.setAttribute('aria-hidden', 'true');
+      },
+      () => {
+        mark.className = '';
+        mark.firstChild.className = 'hidden';
+      },
+      () => {
+        mark.lastChild.removeAttribute('aria-label');
+      },
+      () => footer.remove(),
+    ]) {
+      mutate();
+      h.intervals[0]();
+      await tick();
+      assert.ok(footer.parentNode === h.w.document.body, 'footer restored');
+      assert.ok(footer.lastElementChild === mark, 'decoration restored');
+      assert.equal(mark.textContent, expected);
+      assert.equal(mark.className, 'status-mark');
+      assert.equal(mark.hidden, false);
+      assert.equal(mark.hasAttribute('style'), false);
+      assert.equal(mark.hasAttribute('aria-hidden'), false);
+      assert.equal(mark.firstChild.hasAttribute('class'), false);
+      assert.equal(mark.lastChild.getAttribute('aria-label'), '橙子');
+      assert.equal(field.value, 'CAFE');
+      assert.ok(h.w.document.activeElement === field, 'focus preserved');
+    }
+    assert.ok(
+      h.calls.every(([name]) => ['Snapshot', 'GetSnapshot'].includes(name)),
+      JSON.stringify(h.calls),
+    );
+    // Normal traffic updates do not cause a repair loop or reset any status data.
+    const label = mark.firstChild;
+    const before = mark.innerHTML;
+    h.$('tx-count').textContent = '42 B';
+    h.intervals[0]();
+    await tick();
+    assert.ok(mark.firstChild === label, 'label identity preserved');
+    assert.equal(mark.innerHTML, before);
+  } finally {
+    await h.close();
+  }
+});
+
+function openDeviceEditor(h) {
+  const item = h.w.document.querySelector('#device-list [aria-pressed="true"]');
+  assert.ok(item);
+  item.dispatchEvent(new h.w.MouseEvent('dblclick', { bubbles: true }));
+}
+
+test('empty runtime results use one placeholder and keep later errors visible', async () => {
+  const h = await setup(
+    {
+      project: {
+        name: 'empty',
+        channels: [iecChannel('a', [{ kind: 'yk', address: 100, value: 0 }])],
+      },
+    },
+    null,
+    {
+      GetAutoControlStatus: () => ({ ...autoSnapshot(), saved: true, status: 'stopped' }),
+      GetAutoControlDetails: () => ({ offset: 0, rowCount: 0, rows: [], errors: [] }),
+    },
+  );
+  try {
+    h.w.document.querySelector('[data-point-kind=yk]').click();
+    await h.refresh();
+    const details = h.$('runtime-auto-details');
+    details.open = true;
+    details.dispatchEvent(new h.w.Event('toggle'));
+    await settleAuto();
+    assert.equal(h.$('runtime-auto-summary').hidden, true);
+    assert.equal(h.$('runtime-auto-results').children.length, 1);
+    assert.match(h.$('runtime-auto-results').textContent, /暂无运行记录/);
+    assert.equal(details.querySelector('.runtime-result-pager').hidden, true);
+    h.overrides.GetAutoControlDetails = () => {
+      throw Error('记录读取失败');
+    };
+    details.dispatchEvent(new h.w.Event('toggle'));
+    await settleAuto();
+    assert.equal(h.$('runtime-auto-summary').hidden, false);
+    assert.match(h.$('runtime-auto-summary').textContent, /记录读取失败/);
+    assert.equal(h.$('device-config'), null);
+    assert.equal(h.$('delete-channel'), null);
+  } finally {
+    await h.close();
+  }
+});
+
+test('channel deletion uses its visible menu and retains confirmation and running guard', async () => {
+  const h = await setup({
+    states: [
+      { id: 'a', status: 'stopped' },
+      { id: 'b', status: 'connected', peers: 1 },
+    ],
+  });
+  try {
+    h.overrides.DeleteChannel = (id) => {
+      h.state.project.channels = h.state.project.channels.filter((c) => c.id !== id);
+      h.state.states = h.state.states.filter((s) => s.id !== id);
+    };
+    const menu = (id) => {
+      h.w.document
+        .querySelector('[data-select="' + id + '"]')
+        .dispatchEvent(
+          new h.w.MouseEvent('contextmenu', { bubbles: true, clientX: 10, clientY: 10 }),
+        );
+      return [...h.$('context-menu').children].find((b) => b.textContent === '删除');
+    };
+    assert.equal(menu('b').disabled, true);
+    menu('a').click();
+    await tick();
+    h.$('confirm-actions').querySelector('[value=cancel]').click();
+    await tick();
+    assert.equal(h.calls.filter((c) => c[0] === 'DeleteChannel').length, 0);
+    menu('a').click();
+    await tick();
+    h.$('confirm-actions').querySelector('[value=ok]').click();
+    await settleInline();
+    assert.deepEqual([...h.calls.find((c) => c[0] === 'DeleteChannel')[1]], ['a']);
+    assert.equal(h.w.document.querySelector('[data-select="a"]'), null);
+    assert.ok(h.w.document.querySelector('[data-select="b"]'));
+  } finally {
+    await h.close();
+  }
+});
+
+test('connection labels follow transport changes while station role and address drafts survive', async () => {
+  const h = await setupManager();
+  try {
+    const input = managerInput(h, 'b', 'address');
+    editInline(h, input, '192.0.2.4:2500');
+    for (const [transport, label] of [
+      ['tcp-server', '监听地址'],
+      ['tcp-client', '目标地址'],
+      ['udp', '目标地址'],
+      ['serial', '串口路径'],
+    ]) {
+      h.state.project.channels[1].transport = transport;
+      await h.refresh();
+      assert.equal(managerInput(h, 'b', 'address'), input);
+      assert.equal(input.value, '192.0.2.4:2500');
+      assert.equal(input.closest('label').querySelector('span').textContent, label);
+      assert.equal(input.getAttribute('aria-label'), label + ' · b');
+      assert.equal(h.state.project.channels[1].role, 'client');
+    }
+    assert.equal(h.calls.filter((c) => c[0] === 'UpdateTransport').length, 0);
+  } finally {
+    await h.close();
+  }
+});
+
+test('channel dialog switches target and listening labels without rewriting station role', async () => {
+  const h = await setup();
+  try {
+    h.$('edit-channel').click();
+    await tick();
+    const panel = h.$('original-network-panel');
+    const client = originalField(h, 'rbClient', 'original-network-panel');
+    const server = originalField(h, 'rbServer', 'original-network-panel');
+    const ip = originalField(h, 'txtClientIP', 'original-network-panel');
+    ip.value = '192.0.2.7';
+    assert.match(client.closest('label').textContent, /TCP Client/);
+    assert.match(server.closest('label').textContent, /TCP Server/);
+    assert.equal(ip.closest('label').querySelector('span').textContent, '目标地址');
+    server.click();
+    await tick();
+    assert.equal(
+      originalField(h, 'cbxServerIP', 'original-network-panel')
+        .closest('label')
+        .querySelector('span').textContent,
+      '监听地址',
+    );
+    client.click();
+    await tick();
+    assert.equal(ip.value, '192.0.2.7');
+    assert.equal(panel.querySelector('[data-original-id=rbClient]').checked, true);
+    assert.equal(h.state.project.channels[0].role, 'client');
+    assert.equal(h.calls.filter((c) => c[0] === 'UpdateTransport').length, 0);
+  } finally {
+    await h.close();
+  }
+});
+
+test('point table preview validates before confirmation and applies the reviewed source and scope', async () => {
+  const h = await setup();
+  try {
+    const rows = [{ kind: 'holding', address: 12, name: '<b>温度</b>', value: 42, quality: 0 }];
+    h.overrides.PreviewPointTable = (...args) => {
+      assert.equal(args[2], 'points.csv');
+      assert.equal(Buffer.from(args[3], 'base64').toString(), 'kind,address\nholding,12\n');
+      return {
+        revision: 9,
+        sourceSHA256: 'reviewed-file',
+        total: 1,
+        existing: 1,
+        added: 1,
+        updated: 0,
+        removed: args[5] === 'replace-all' ? 1 : 0,
+        rows,
+      };
+    };
+    h.overrides.ApplyPointTable = (...args) => {
+      assert.equal(args[5], 'replace-all');
+      assert.equal(args[6], 'reviewed-file');
+      assert.equal(args[7], 9);
+      h.state.dirty = true;
+    };
+    h.$('open-point-table').click();
+    await settleInline();
+    assert.equal(h.$('point-table-dialog').open, true);
+    const file = new h.w.File(['kind,address\nholding,12\n'], 'points.csv');
+    Object.defineProperty(h.$('point-table-file'), 'files', { configurable: true, value: [file] });
+    h.$('point-table-file').dispatchEvent(new h.w.Event('change'));
+    await settleInline();
+    await settleInline();
+    assert.match(h.$('point-table-preview').textContent, /<b>温度<\/b>/);
+    assert.equal(h.$('point-table-preview').querySelector('b'), null);
+    assert.equal(
+      h.calls.some((c) => c[0] === 'ApplyPointTable'),
+      false,
+    );
+    h.$('point-table-mode').value = 'replace-all';
+    h.$('point-table-mode').dispatchEvent(new h.w.Event('change'));
+    await settleInline();
+    assert.match(h.$('point-table-summary').textContent, /移除 1 点/);
+    h.$('point-table-apply').click();
+    await tick();
+    assert.equal(
+      h.calls.some((c) => c[0] === 'ApplyPointTable'),
+      false,
+    );
+    assert.equal(h.$('point-table-mode').disabled, true);
+    h.$('point-table-apply').click();
+    h.$('confirm-actions').querySelector('[value=ok]').click();
+    await settleInline();
+    assert.equal(h.$('point-table-mode').disabled, false);
+    assert.equal(h.calls.filter((c) => c[0] === 'ApplyPointTable').length, 1);
+    assert.match(h.$('point-table-summary').textContent, /请保存工程/);
+    h.overrides.PreviewPointTable = () => {
+      throw Error('第3行地址越界');
+    };
+    h.$('point-table-kind').dispatchEvent(new h.w.Event('change'));
+    await settleInline();
+    assert.equal(h.$('point-table-apply').disabled, true);
+    assert.match(
+      h.$('point-table-dialog').querySelector('.form-error').textContent,
+      /第3行地址越界/,
+    );
+  } finally {
+    await h.close();
+  }
+});
+
+test('packet automation saves drafts without starting and editor close preserves explicit jobs', async () => {
+  const raw = { ...channel('raw'), protocol: 'raw', devices: [] };
+  const view = {
+    config: {
+      framing: 'idle',
+      idleMs: 30,
+      frameLength: 1,
+      delimiter: '0D0A',
+      replies: [],
+      rows: [],
+      selection: '',
+      intervalMs: 1000,
+      cycleMs: 0,
+      cycles: 1,
+    },
+    reply: { running: false, sent: 0, cycles: 0, error: '' },
+    send: { running: false, sent: 0, cycles: 0, error: '' },
+  };
+  const h = await setup({
+    project: { name: 'raw', channels: [raw] },
+    states: [{ id: 'raw', status: 'connected', peers: 1 }],
+  });
+  try {
+    h.overrides.GetRawTools = () => structuredClone(view);
+    h.overrides.SaveRawTools = (id, cfg) => {
+      assert.equal(id, 'raw');
+      view.config = structuredClone(cfg);
+    };
+    h.overrides.StartRawTask = (id, mode) => {
+      assert.equal(id, 'raw');
+      view[mode].running = true;
+    };
+    h.overrides.StopRawTask = (id, mode) => {
+      assert.equal(id, 'raw');
+      view[mode].running = false;
+    };
+    h.$('open-packet-tools').click();
+    await settleInline();
+    h.$('packet-add-send').click();
+    const input = h.$('packet-sends').querySelector('[data-packet-field=data]');
+    input.value = 'AA 55';
+    input.dispatchEvent(new h.w.Event('input', { bubbles: true }));
+    await h.refresh();
+    assert.equal(input.value, 'AA 55');
+    h.$('packet-send-toggle').click();
+    await settleInline();
+    assert.equal(
+      h.calls.some((c) => c[0] === 'StartRawTask'),
+      false,
+    );
+    assert.match(h.$('packet-tools-dialog').querySelector('.form-error').textContent, /先保存/);
+    h.$('packet-save').click();
+    await settleInline();
+    assert.equal(view.config.rows[0].data, 'AA 55');
+    assert.equal(
+      h.calls.some((c) => c[0] === 'StartRawTask'),
+      false,
+    );
+    h.$('packet-send-toggle').click();
+    await settleInline();
+    assert.equal(view.send.running, true);
+    assert.equal(input.disabled, true);
+    assert.equal(h.$('packet-send-toggle').textContent, '停止');
+    h.$('pause-messages').click();
+    await tick();
+    assert.equal(view.send.running, true);
+    h.$('packet-tools-dialog').querySelector('[data-close]').click();
+    await tick();
+    assert.equal(view.send.running, true);
+    assert.equal(
+      h.calls.some((c) => c[0] === 'StopRawTask'),
+      false,
+    );
+    h.$('open-packet-tools').click();
+    await settleInline();
+    h.$('packet-send-toggle').click();
+    await settleInline();
+    assert.equal(view.send.running, false);
+    assert.equal(h.$('packet-sends').querySelector('[data-packet-field=data]').disabled, false);
+  } finally {
+    await h.close();
+  }
+});
+
+test('toolbox preserves tool drafts and renders results as text', async () => {
+  const h = await setup();
+  try {
+    h.overrides.RunDesktopTool = (r) => ({ text: r.kind + ':' + r.input, fields: [] });
+    const before = JSON.stringify(h.state);
+    h.$('open-toolbox').click();
+    await tick();
+    h.$('tool-input').value = '<script>alert(1)</script>';
+    h.$('toolbox-run').click();
+    await settleInline();
+    assert.equal(h.$('tool-output').value, 'number:<script>alert(1)</script>');
+    assert.equal(h.$('toolbox-dialog').querySelectorAll('script').length, 0);
+    h.$('tool-kind').value = 'time';
+    h.$('tool-kind').dispatchEvent(new h.w.Event('change'));
+    h.$('tool-input').value = '2026-11-03';
+    h.$('tool-kind').value = 'number';
+    h.$('tool-kind').dispatchEvent(new h.w.Event('change'));
+    assert.equal(h.$('tool-input').value, '<script>alert(1)</script>');
+    h.overrides.RunDesktopTool = () => {
+      throw Error('输入不是完整字节对');
+    };
+    h.$('toolbox-run').click();
+    await settleInline();
+    assert.match(h.$('toolbox-dialog').querySelector('.form-error').textContent, /完整字节对/);
+    assert.equal(h.$('toolbox-terminal'), null);
+    assert.equal(h.$('toolbox-dialog').querySelector('.dialog-actions'), null);
+    assert.equal(JSON.stringify(h.state), before);
+  } finally {
+    await h.close();
+  }
+});
+
+test('RAW terminal text sends only on explicit submit and preserves per-channel format drafts', async () => {
+  const h = await setup({
+    project: {
+      name: 'terminal',
+      channels: [
+        { ...channel('a'), protocol: 'raw', devices: [] },
+        { ...channel('b'), protocol: 'raw', devices: [] },
+      ],
+    },
+    states: [
+      { id: 'a', status: 'connected', peers: 1 },
+      { id: 'b', status: 'connected', peers: 1 },
+    ],
+  });
+  try {
+    h.overrides.SendRawText = () => {};
+    h.$('raw-format').value = 'text';
+    h.$('raw-format').dispatchEvent(new h.w.Event('change'));
+    h.$('raw-hex').value = '中文';
+    h.$('append-crc').checked = true;
+    h.w.document.querySelector('[data-select=b]').click();
+    await tick();
+    h.w.document.querySelector('[data-select=a]').click();
+    await tick();
+    assert.equal(h.$('raw-format').value, 'text');
+    assert.equal(h.$('raw-hex').value, '中文');
+    assert.equal(
+      h.calls.some((c) => ['SendRawText', 'SendHex'].includes(c[0])),
+      false,
+    );
+    h.$('raw-form').dispatchEvent(new h.w.Event('submit', { bubbles: true, cancelable: true }));
+    await settleInline();
+    assert.deepEqual(
+      h.calls.filter((c) => c[0] === 'SendRawText').map((c) => c[1]),
+      [['a', '中文', true]],
+    );
+    assert.equal(
+      h.calls.some((c) => c[0] === 'SendHex'),
+      false,
+    );
+  } finally {
+    await h.close();
+  }
+});
+
+test('editing toolbox input invalidates an in-flight conversion and its copy action', async () => {
+  const h = await setup();
+  try {
+    let finish;
+    h.overrides.RunDesktopTool = () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      });
+    h.$('open-toolbox').click();
+    h.$('tool-input').value = '255';
+    h.$('toolbox-run').click();
+    await tick();
+    assert.equal(h.$('toolbox-run').disabled, true);
+    h.$('tool-input').value = '256';
+    h.$('tool-input').dispatchEvent(new h.w.Event('input'));
+    finish({ text: 'old:255', fields: [] });
+    await settleInline();
+    assert.equal(h.$('tool-output').value, '');
+    assert.equal(h.$('toolbox-copy').disabled, true);
+    assert.equal(h.$('toolbox-run').disabled, false);
+    h.overrides.RunDesktopTool = () => ({ text: 'current:256', fields: [] });
+    h.$('toolbox-run').click();
+    await settleInline();
+    assert.equal(h.$('tool-output').value, 'current:256');
+    h.$('tool-order').dispatchEvent(new h.w.Event('change'));
+    assert.equal(h.$('tool-output').value, '');
+    assert.equal(h.$('toolbox-copy').disabled, true);
+  } finally {
+    await h.close();
+  }
+});
+
+test('saving packet configuration freezes drafts and rejects duplicate submissions', async () => {
+  const raw = { ...channel('raw'), protocol: 'raw', devices: [] };
+  const view = {
+    config: {
+      framing: 'idle',
+      idleMs: 30,
+      frameLength: 1,
+      delimiter: '0D0A',
+      replies: [],
+      rows: [],
+      selection: '',
+      intervalMs: 1000,
+      cycleMs: 0,
+      cycles: 1,
+    },
+    reply: { running: false, sent: 0 },
+    send: { running: false, sent: 0, cycles: 0 },
+  };
+  const h = await setup({ project: { name: 'raw', channels: [raw] } });
+  try {
+    let finish;
+    h.overrides.GetRawTools = () => structuredClone(view);
+    h.overrides.SaveRawTools = () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      });
+    h.$('open-packet-tools').click();
+    await settleInline();
+    h.$('packet-add-send').click();
+    h.$('packet-save').click();
+    await tick();
+    assert.equal(h.$('packet-interval').disabled, true);
+    assert.equal(h.$('packet-save').disabled, true);
+    h.$('packet-save').click();
+    await tick();
+    assert.equal(h.calls.filter((c) => c[0] === 'SaveRawTools').length, 1);
+    finish();
+    await settleInline();
+    assert.equal(h.$('packet-interval').disabled, false);
+    assert.equal(h.$('packet-save').disabled, true);
+  } finally {
+    await h.close();
+  }
+});
+
+test('toolbox renders dedicated layouts and only relevant parameters', async () => {
+  const h = await setup();
+  try {
+    h.overrides.RunDesktopTool = (r) => ({
+      text: '255\n0xFF',
+      fields: [
+        { name: '十进制', value: '255' },
+        { name: '十六进制', value: '0xFF' },
+      ],
+    });
+    h.$('open-toolbox').click();
+    await tick();
+    assert.equal(h.$('tool-order-wrap').hidden, true);
+    h.$('tool-input').value = '255';
+    h.$('toolbox-run').click();
+    await settleInline();
+    assert.equal(h.$('tool-fields').querySelectorAll('.tool-field').length, 2);
+    assert.match(h.$('tool-fields').textContent, /0xFF/);
+    assert.equal(h.$('tool-output').hidden, true);
+    for (const kind of ['encoding', 'string', 'time', 'packet']) {
+      h.$('tool-navigation').querySelector(`[data-tool=${kind}]`).click();
+      await tick();
+      assert.equal(h.$('tool-kind').value, kind === 'packet' ? 'iec104' : kind);
+      assert.equal(
+        h.$('tool-navigation').querySelector(`[data-tool=${kind}]`).getAttribute('aria-pressed'),
+        'true',
+      );
+    }
+    assert.equal(h.$('tool-operation-wrap').hidden, false);
+    h.overrides.RunDesktopTool = () => ({
+      text: 'frame',
+      fields: [
+        { name: 'APDU字节数', value: '6' },
+        { name: '帧格式', value: 'U帧' },
+        { name: '命令', value: '<b>STARTDT</b>' },
+      ],
+    });
+    h.$('toolbox-run').click();
+    await settleInline();
+    assert.equal(h.$('tool-fields').querySelectorAll('details').length, 2);
+    assert.equal(h.$('tool-fields').querySelector('b'), null);
+    assert.match(h.$('tool-fields').textContent, /控制域/);
+  } finally {
+    await h.close();
+  }
+});
+
+test('Modbus tools use direction-specific examples and a structured read form', async () => {
+  const h = await setup();
+  try {
+    const select = (id, value) => {
+      h.$(id).value = value;
+      h.$(id).dispatchEvent(new h.w.Event('change'));
+    };
+    h.$('open-toolbox').click();
+    h.$('tool-navigation').querySelector('[data-tool=packet]').click();
+    select('tool-protocol', 'modbus');
+    assert.equal(h.$('tool-transport-wrap').hidden, false);
+    assert.equal(h.$('tool-read-fields').hidden, true);
+    select('tool-transport', 'ascii');
+    select('tool-operation', 'response');
+    h.$('tool-example').click();
+    assert.equal(h.$('tool-input').value, ':010302002AD0');
+    select('tool-operation', 'read');
+    select('tool-transport', 'tcp');
+    assert.equal(h.$('tool-source').hidden, true);
+    assert.equal(h.$('tool-read-fields').hidden, false);
+    assert.equal(h.$('tool-transaction-wrap').hidden, false);
+    assert.equal(h.$('tool-read-function').value, '3');
+    h.$('tool-read-address').value = '65535';
+    h.overrides.RunDesktopTool = (r) => {
+      assert.equal(r.operation, 'read');
+      assert.equal(r.encoding, 'tcp');
+      assert.equal(r.transaction, '1');
+      assert.equal(r.read.unit, '1');
+      assert.equal(r.read.address, '65535');
+      assert.equal(r.read.quantity, '1');
+      return { text: '00 01 00 00 00 06 01 03 FF FF 00 01' };
+    };
+    h.$('toolbox-run').click();
+    await settleInline();
+    assert.match(h.$('tool-output').value, /FF FF 00 01/);
+    assert.equal(h.$('toolbox-copy').disabled, false);
+    h.$('tool-navigation').querySelector('[data-tool=network]').click();
+    assert.equal(h.$('tool-transport-wrap').hidden, true);
+    h.$('tool-example').click();
+    assert.equal(h.$('tool-input').value, '192.168.1.25/24');
+    h.$('tool-navigation').querySelector('[data-tool=packet]').click();
+    assert.equal(h.$('tool-protocol').value, 'modbus');
+    select('tool-protocol', 'iec104');
+    assert.equal(h.$('tool-transport-wrap').hidden, true);
+    select('tool-protocol', 'modbus');
+    assert.equal(h.$('tool-read-address').value, '65535');
+  } finally {
+    await h.close();
+  }
+});
+
+test('Modbus generated frames carry their format into the parser and preserve the payload draft', async () => {
+  const h = await setup();
+  try {
+    const select = (id, value) => {
+      h.$(id).value = value;
+      h.$(id).dispatchEvent(new h.w.Event('change'));
+    };
+    const operations = [];
+    h.overrides.RunDesktopTool = (request) => {
+      operations.push(request);
+      const text = {
+        read: ':010300000001FB',
+        build: ':010302002AD0',
+        request: '读取请求',
+        response: '读取响应',
+      }[request.operation];
+      return { text, fields: [{ name: '协议', value: 'Modbus ASCII' }] };
+    };
+    h.$('open-toolbox').click();
+    h.$('tool-navigation').querySelector('[data-tool=packet]').click();
+    select('tool-protocol', 'modbus');
+    select('tool-transport', 'ascii');
+    select('tool-operation', 'read');
+    assert.equal(h.$('toolbox-parse').disabled, true);
+    h.$('toolbox-run').click();
+    await settleInline();
+    h.$('toolbox-parse').click();
+    await settleInline();
+    assert.deepEqual(
+      operations.map(({ operation }) => operation),
+      ['read', 'request'],
+    );
+    assert.equal(operations[1].encoding, 'ascii');
+    assert.equal(operations[1].input, ':010300000001FB');
+    assert.equal(h.$('toolbox-parse').hidden, true);
+    assert.match(h.$('tool-fields').textContent, /帧与校验/);
+    select('tool-operation', 'build');
+    h.$('tool-input').value = '01 03 02 00 2A';
+    h.$('toolbox-run').click();
+    await settleInline();
+    h.$('toolbox-parse').click();
+    assert.equal(operations.length, 3);
+    select('tool-operation', 'response');
+    assert.equal(h.$('tool-input').value, ':010302002AD0');
+    h.$('toolbox-run').click();
+    await settleInline();
+    assert.equal(operations[3].operation, 'response');
+    assert.equal(operations[3].encoding, 'ascii');
+    select('tool-operation', 'build');
+    assert.equal(h.$('tool-input').value, '01 03 02 00 2A');
+    assert.equal(h.$('toolbox-parse').disabled, true);
+  } finally {
+    await h.close();
+  }
+});
+
+test('encoding swaps conversion direction and keeps per-tool options and drafts', async () => {
+  const h = await setup();
+  try {
+    const choose = (kind) => h.$('tool-navigation').querySelector(`[data-tool=${kind}]`).click();
+    choose('encoding');
+    h.$('tool-encoding').value = 'gbk';
+    h.$('tool-input').value = '中文';
+    h.overrides.RunDesktopTool = (r) => {
+      assert.equal(r.encoding, 'gbk');
+      return { text: 'D6 D0 CE C4', fields: [] };
+    };
+    h.$('toolbox-run').click();
+    await settleInline();
+    assert.equal(h.$('toolbox-swap').disabled, false);
+    h.$('toolbox-swap').click();
+    assert.equal(h.$('tool-operation').value, 'decode');
+    assert.equal(h.$('tool-input').value, 'D6 D0 CE C4');
+    assert.equal(h.$('tool-output').value, '');
+    choose('number');
+    choose('encoding');
+    assert.equal(h.$('tool-encoding').value, 'gbk');
+    assert.equal(h.$('tool-operation').value, 'decode');
+    assert.equal(h.$('tool-input').value, 'D6 D0 CE C4');
+    choose('string');
+    h.$('tool-operation').value = 'json-format';
+    h.$('tool-operation').dispatchEvent(new h.w.Event('change'));
+    assert.equal(h.$('toolbox-swap').hidden, true);
+  } finally {
+    await h.close();
+  }
+});
+
+test('timestamp tool refreshes independently and converts in both directions with fixed separators', async () => {
+  const h = await setup();
+  try {
+    const select = (id, value) => {
+      h.$(id).value = value;
+      h.$(id).dispatchEvent(new h.w.Event('change'));
+    };
+    const submit = (id) => h.$(id).dispatchEvent(new h.w.Event('submit', { cancelable: true }));
+    h.$('open-toolbox').click();
+    h.$('tool-navigation').querySelector('[data-tool=time]').click();
+    assert.equal(h.$('tool-time-workspace').hidden, false);
+    assert.equal(h.$('tool-workspace').hidden, true);
+    assert.equal(h.$('toolbox-run').hidden, true);
+    assert.equal(h.$('tool-time-unit').value, 'unix-ms');
+    assert.equal(h.$('tool-zone').value, '+08:00');
+    assert.deepEqual(
+      [...h.$('tool-zone').options].map((option) => option.value),
+      ['+08:00', 'UTC'],
+    );
+    const date = h.$('tool-time-date');
+    const today = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    assert.equal(date.value, today.replaceAll('-', '') + ' 00:00:00.000');
+    const initial = Number(h.$('tool-time-live').value);
+    assert.ok(Math.abs(initial - Date.now()) < 1000);
+    h.$('tool-time-stamp').value = '1793795696123';
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    h.intervals.at(-1)();
+    assert.ok(Number(h.$('tool-time-live').value) > initial);
+    assert.equal(h.$('tool-time-stamp').value, '1793795696123');
+    const requests = [];
+    h.overrides.RunDesktopTool = (request) => {
+      requests.push(request);
+      return {
+        fields: [
+          { name: '日期时间', value: '2026-11-04T12:34:56.123+08:00' },
+          { name: 'Unix秒', value: '1793795696' },
+          { name: 'Unix毫秒', value: '1793795696123' },
+        ],
+      };
+    };
+    submit('tool-time-from-stamp');
+    await settleInline();
+    assert.deepEqual(
+      { ...requests[0] },
+      {
+        kind: 'time',
+        operation: 'unix-ms',
+        input: '1793795696123',
+        zone: '+08:00',
+      },
+    );
+    assert.equal(date.value, '20261104 12:34:56.123');
+    const edit = (inputType, data = null) =>
+      date.dispatchEvent(new h.w.InputEvent('beforeinput', { inputType, data, cancelable: true }));
+    date.setSelectionRange(8, 9);
+    edit('deleteContentForward');
+    assert.equal(date.value, '20261104 12:34:56.123');
+    date.setSelectionRange(9, 9);
+    edit('deleteContentBackward');
+    assert.equal(date.value, '2026110D 12:34:56.123');
+    edit('insertText', '4');
+    assert.equal(date.selectionStart, 9);
+    assert.equal(date.value, '20261104 12:34:56.123');
+    date.select();
+    edit('insertText', '20261104123456123');
+    assert.equal(date.value, '20261104 12:34:56.123');
+    for (const value of ['2026-11-04 12:34:56.123', '20261104 12:34:56.123']) {
+      const clipboardData = new h.w.DataTransfer();
+      clipboardData.setData('text', value);
+      date.dispatchEvent(new h.w.ClipboardEvent('paste', { clipboardData, cancelable: true }));
+      assert.equal(date.value, '20261104 12:34:56.123');
+    }
+    submit('tool-time-from-date');
+    await settleInline();
+    assert.equal(requests[1].input, '2026-11-04 12:34:56.123');
+    select('tool-time-unit', 'unix-seconds');
+    assert.ok(Math.abs(Number(h.$('tool-time-live').value) - Math.floor(Date.now() / 1000)) < 2);
+    assert.equal(date.value, '20261104 12:34:56');
+    submit('tool-time-from-date');
+    await settleInline();
+    assert.equal(requests[2].input, '2026-11-04 12:34:56');
+    assert.equal(h.$('tool-time-stamp').value, '1793795696');
+    submit('tool-time-from-stamp');
+    await settleInline();
+    assert.equal(requests[3].operation, 'unix-seconds');
+    h.$('tool-navigation').querySelector('[data-tool=number]').click();
+    h.$('tool-navigation').querySelector('[data-tool=time]').click();
+    assert.equal(date.value, '20261104 12:34:56');
+    date.setSelectionRange(4, 6);
+    edit('deleteContentBackward');
+    submit('tool-time-from-date');
+    assert.equal(h.$('tool-time-error').hidden, false);
+    assert.match(h.$('tool-time-error').textContent, /完整日期时间/);
+  } finally {
+    await h.close();
+  }
+});
+
+test('toolbox examples follow byte width, byte order, encoding and CP56Time2a', async () => {
+  const h = await setup();
+  try {
+    const select = (id, value) => {
+      h.$(id).value = value;
+      h.$(id).dispatchEvent(new h.w.Event('change'));
+    };
+    const sample = () => {
+      h.$('tool-example').click();
+      return h.$('tool-input').value;
+    };
+    select('tool-operation', 'hex-tofloat32');
+    assert.equal(sample().split(' ').length, 4);
+    select('tool-operation', 'hex-tofloat64');
+    assert.equal(sample().split(' ').length, 8);
+    const little = sample();
+    select('tool-order', 'big');
+    assert.notEqual(sample(), little);
+    select('tool-kind', 'iec104');
+    select('tool-operation', 'cp56');
+    assert.equal(sample().split(' ').length, 7);
+    assert.equal(h.$('tool-zone-wrap').hidden, false);
+    select('tool-kind', 'encoding');
+    select('tool-operation', 'decode');
+    const utf8 = sample();
+    select('tool-encoding', 'utf16le');
+    assert.notEqual(sample(), utf8);
+    assert.match(sample(), /2D 4E/);
+    select('tool-kind', 'string');
+    select('tool-operation', 'json-format');
+    assert.match(h.$('tool-input-label').textContent, /JSON/);
+    assert.match(sample(), /"name"/);
+    select('tool-operation', 'url-decode');
+    assert.match(sample(), /%E4/);
+    assert.equal(h.$('tool-input').placeholder, '');
+    assert.equal(h.$('tool-input-note'), null);
+    assert.equal(h.$('tool-result-status'), null);
+  } finally {
+    await h.close();
+  }
+});
+
+test('development CSS replacement preserves input and focus and waits for stylesheet load', async () => {
+  const w = new Window({ url: 'http://localhost/', settings: { disableCSSFileLoading: true } });
+  try {
+    w.document.write(
+      '<html><head><link rel="stylesheet" href="app.css"></head><body><input id="draft" value="unsaved"></body></html>',
+    );
+    w.document.body.style.visibility = 'visible';
+    // Keep the synthetic stylesheet inert until its explicit load event below.
+    const originalLink = w.document.querySelector('link');
+    const insertAfter = originalLink.after.bind(originalLink);
+    originalLink.after = (node) => {
+      node.rel = 'test-inert';
+      insertAfter(node);
+    };
+    const input = w.document.getElementById('draft');
+    input.focus();
+    let poll;
+    w.setInterval = (fn) => {
+      poll = fn;
+      return 1;
+    };
+    w.go = {
+      main: {
+        App: { GetDevelopmentState: async () => ({ enabled: true, code: 'one', styles: 'new' }) },
+      },
+    };
+    const script = await readFile(new URL('../scripts/dev_reload.js', import.meta.url), 'utf8');
+    w.eval(
+      script.replace(
+        '__PRS_INITIAL_REVISION__',
+        JSON.stringify({ enabled: true, code: 'one', styles: 'old' }),
+      ),
+    );
+    const pending = poll();
+    await tick();
+    const links = w.document.querySelectorAll('link');
+    assert.equal(links.length, 2);
+    links[1].dispatchEvent(new w.Event('load'));
+    await pending;
+    assert.equal(w.document.querySelectorAll('link').length, 1);
+    assert.match(w.document.querySelector('link').href, /prs-dev=new/);
+    assert.equal(input.value, 'unsaved');
+    assert.equal(w.document.activeElement, input);
+  } finally {
+    await w.happyDOM.close();
+  }
+});
+
+test('development reload waits while an input is active and retries without writing data', async () => {
+  const w = new Window({ url: 'http://localhost/' });
+  try {
+    w.document.write('<body><input id="draft"></body>');
+    w.document.body.style.visibility = 'visible';
+    let poll,
+      reloads = 0,
+      queries = 0;
+    // Use a plain location facade so navigation is observable in the test.
+    const source = await readFile(new URL('../scripts/dev_reload.js', import.meta.url), 'utf8');
+    const context = {
+      window: {
+        go: {
+          main: {
+            App: {
+              GetDevelopmentState: async () => {
+                queries++;
+                return { enabled: true, code: 'new', styles: 'old' };
+              },
+            },
+          },
+        },
+        location: {
+          reload: () => {
+            reloads++;
+          },
+        },
+      },
+      document: w.document,
+      setInterval: (fn) => {
+        poll = fn;
+      },
+      console,
+      URL,
+    };
+    const vm = await import('node:vm');
+    vm.runInNewContext(
+      source.replace(
+        '__PRS_INITIAL_REVISION__',
+        JSON.stringify({ enabled: true, code: 'old', styles: 'old' }),
+      ),
+      context,
+    );
+    w.document.getElementById('draft').focus();
+    await poll();
+    assert.equal(reloads, 0);
+    w.document.getElementById('draft').blur();
+    await poll();
+    assert.equal(reloads, 1);
+    assert.equal(queries, 2);
+    // A JS syntax error can leave the product hidden; fixing that source must still reload.
+    w.document.body.style.visibility = 'hidden';
+    await poll();
+    assert.equal(reloads, 2);
+  } finally {
+    await w.happyDOM.close();
+  }
+});
+
+test('four remote point tables show read-only communication time before description and preserve editing drafts', async () => {
+  const points = ['yx', 'yc', 'yk', 'yt'].map((kind, i) => ({
+    kind,
+    address: i + 1,
+    value: 0,
+    quality: 0,
+    name: '点位描述',
+    communicationAt: '2026-11-05T12:34:56.123456789+08:00',
+    timestamp: '2000-01-01T00:00:00Z',
+  }));
+  const c = iecChannel('a', points);
+  const h = await setup({ project: { name: '通信时间', channels: [c] } });
+  try {
+    for (const role of ['client', 'server']) {
+      h.state.project.channels[0].role = role;
+      h.w.document.querySelector('[data-mode=' + role + ']').click();
+      await h.refresh();
+      for (const kind of ['yx', 'yc', 'yk', 'yt']) {
+        h.w.document.querySelector('[data-point-kind=' + kind + ']').click();
+        const row = h.$('point-rows').firstElementChild;
+        const headers = [...h.w.document.querySelectorAll('.point-table th')].map(
+          (el) => el.textContent,
+        );
+        assert.deepEqual(headers.slice(-2), ['上报时间', '描述']);
+        const time = row.querySelector('[data-point-column=communicationAt]');
+        assert.equal(time.textContent, '12:34:56');
+        assert.equal(time.title, '2026-11-05 12:34:56 +08:00');
+        assert.equal(time.querySelector('input'), null);
+        const description = row.querySelector('[data-point-field=name]');
+        description.focus();
+        editInline(h, description, '尚未提交的描述');
+        const stored = h.state.project.channels.find((ch) => ch.id === c.id);
+        const point = (stored.devices?.[0]?.points || stored.points).find((p) => p.kind === kind);
+        point.communicationAt = '2026-11-06T00:00:00.004Z';
+        await h.refresh();
+        assert.equal(time.textContent, '00:00:00');
+        assert.equal(description.value, '尚未提交的描述');
+        inlineKey(h, description, 'Escape');
+        description.blur();
+        point.communicationAt = '';
+        await h.refresh();
+        assert.equal(time.textContent, '—');
+        point.communicationAt = '2026-11-05T12:34:56.123456789+08:00';
+      }
+    }
+    assert.equal(
+      h.calls.some((c) => ['EditPointCell', 'Command104Device', 'SetPointValue'].includes(c[0])),
+      false,
+    );
+  } finally {
+    await h.close();
+  }
+});
+
+test('incremental point polling refreshes communication time when value and metadata are unchanged', async () => {
+  const c = dataServer();
+  let phase = 0;
+  const h = await setup({}, null, {
+    GetView: (req) => ({
+      metadata: 1,
+      generation: 1,
+      name: 'communication-only',
+      dirty: false,
+      states: [],
+      channel: c.id,
+      device: c.devices[0].id,
+      pointIdentity: c.id + '/' + c.devices[0].id,
+      pointVersion: phase + 1,
+      messageEpoch: 1,
+      eventEpoch: 1,
+      messages: [],
+      events: [],
+      ...(!req.metadata
+        ? {
+            project: {
+              name: 'communication-only',
+              channels: [{ ...c, role: 'client', devices: [{ ...c.devices[0], points: null }] }],
+            },
+          }
+        : {}),
+      fullPoints: !req.points,
+      points:
+        !req.points || req.points < phase + 1
+          ? [
+              {
+                ...c.devices[0].points[0],
+                communicationAt: phase
+                  ? '2026-11-06T00:00:00.002+08:00'
+                  : '2026-11-05T23:59:59.999+08:00',
+              },
+            ]
+          : [],
+    }),
+  });
+  try {
+    h.w.document.querySelector('[data-point-kind=yc]').click();
+    const row = h.$('point-rows').firstElementChild;
+    const time = row.querySelector('[data-point-column=communicationAt]');
+    const value = row.querySelector('[data-point-field=value]').value;
+    assert.equal(time.textContent, '23:59:59');
+    phase = 1;
+    await h.refresh();
+    assert.equal(time.textContent, '00:00:00');
+    assert.match(time.title, /^2026-11-06/);
+    assert.equal(row.querySelector('[data-point-field=value]').value, value);
+    assert.equal(
+      h.calls.some((c) => c[0] === 'GetSnapshot'),
+      false,
+    );
+  } finally {
+    await h.close();
+  }
+});
+
+test('all supported protocols and devices share the seconds-only point time column', async () => {
+  for (const protocol of ['iec104', 'modbus-tcp', 'modbus-rtu']) {
+    const channels = ['client', 'server'].map((role) => ({
+      ...channel(role),
+      protocol,
+      role,
+      devices: [1, 2].map((unit) => ({
+        id: 'device-' + unit,
+        name: '装置' + unit,
+        unit,
+        commonAddress: unit,
+        points: ['yx', 'yc', 'yk', 'yt'].map((category, index) => ({
+          kind:
+            protocol === 'iec104' ? category : ['discrete', 'holding', 'coil', 'holding'][index],
+          tab: category,
+          address: index + 1,
+          value: 0,
+          quality: 0,
+          name: category,
+          communicationAt: `2026-11-05T12:34:0${unit}.987654321+08:00`,
+        })),
+      })),
+    }));
+    const h = await setup({ project: { name: '全部点位时间', channels } });
+    try {
+      for (const role of ['client', 'server']) {
+        h.w.document.querySelector('[data-mode=' + role + ']').click();
+        await h.refresh();
+        for (const unit of [1, 2]) {
+          h.w.document.querySelector('[data-device="device-' + unit + '"]').click();
+          for (const category of ['yx', 'yc', 'yk', 'yt']) {
+            h.w.document.querySelector('[data-point-kind=' + category + ']').click();
+            const row = h.$('point-rows').firstElementChild;
+            const time = row.querySelector('[data-point-column=communicationAt]');
+            assert.equal(
+              time.textContent,
+              `12:34:0${unit}`,
+              `${protocol}/${role}/${unit}/${category}`,
+            );
+            assert.equal(time.title, `2026-11-05 12:34:0${unit} +08:00`);
+            assert.equal(time.querySelector('input'), null);
+            assert.equal(time.nextElementSibling.dataset.pointColumn, 'name');
+          }
+        }
+      }
+    } finally {
+      await h.close();
+    }
   }
 });

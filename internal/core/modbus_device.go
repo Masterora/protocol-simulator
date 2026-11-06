@@ -139,6 +139,7 @@ func (e *Engine) commandModbusContext(ctx context.Context, channel, device strin
 		if err != nil {
 			return err
 		}
+		p.recordModbusCommunication(d.ID, pdu)
 		select {
 		case err = <-result:
 			return err

@@ -54,6 +54,19 @@ type pointRevision struct {
 }
 
 func (e *Engine) markConfigurationLocked() {
+	e.prunePointCommunicationsLocked()
+	if len(e.rawTasks) > 0 {
+		channels := map[string]bool{}
+		for _, c := range e.project.Channels {
+			channels[c.ID] = true
+		}
+		for key, job := range e.rawTasks {
+			if !channels[key.channel] {
+				job.cancel()
+				delete(e.rawTasks, key)
+			}
+		}
+	}
 	e.viewClock++
 	e.viewMetadata = e.viewClock
 	e.viewPoints = nil
@@ -74,6 +87,7 @@ func (e *Engine) markPointsLocked(channel, device string, points []Point) {
 	}
 	v.version = e.viewClock
 	for _, p := range points {
+		p = e.communicationPointLocked(channel, device, p)
 		v.changed[PointKey{p.Kind, p.Address}] = changedPoint{e.viewClock, p}
 	}
 }
@@ -85,6 +99,7 @@ func (e *Engine) View(request ViewRequest) View {
 		project := Project{Version: e.project.Version, Name: e.project.Name, Channels: make([]Channel, len(e.project.Channels))}
 		for i, c := range e.project.Channels {
 			c.Points = nil
+			c.RawTools = cloneRawTools(c.RawTools)
 			c.TransportDraft = cloneTransportDraft(c.TransportDraft)
 			c.Devices = append([]Device{}, c.Devices...)
 			for j := range c.Devices {
@@ -133,6 +148,9 @@ func (e *Engine) View(request ViewRequest) View {
 			v.FullPoints = reset || request.PointIdentity != v.PointIdentity || request.Points == 0 || request.Points > v.PointVersion
 			if v.FullPoints {
 				v.Points = append([]Point{}, d.Points...)
+				for i, p := range v.Points {
+					v.Points[i] = e.communicationPointLocked(v.Channel, v.Device, p)
+				}
 			} else if change != nil && request.Points < change.version {
 				for _, c := range change.changed {
 					if c.version > request.Points {

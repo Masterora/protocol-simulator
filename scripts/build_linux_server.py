@@ -10,10 +10,12 @@ import tarfile
 import tempfile
 
 from delivery import digest, source_hashes, verify_binary_licenses
+from cleanup_artifacts import ArtifactCleanup
 
 
 def main():
     root = Path(__file__).resolve().parents[1]
+    cleanup = ArtifactCleanup(root)
     version = json.loads((root / 'wails.json').read_text())['info']['productVersion']
     before = source_hashes(root)
     fingerprint = hashlib.sha256(json.dumps(before, sort_keys=True).encode()).hexdigest()
@@ -21,8 +23,8 @@ def main():
     for directory in (work, output, verification):
         directory.mkdir(exist_ok=True)
     with (verification / 'linux-server-tests.txt').open('w') as log:
-        subprocess.run(['go', 'test', '-race', './internal/core', './internal/runner', './internal/observe', './internal/tui', '-count=1', '-v', '-timeout=180s'], cwd=root, stdout=log, stderr=subprocess.STDOUT, check=True)
-        subprocess.run(['go', 'vet', './cmd/prs', './internal/core', './internal/runner', './internal/observe', './internal/tui'], cwd=root, stdout=log, stderr=subprocess.STDOUT, check=True)
+        subprocess.run(['go', 'test', '-race', './internal/core', './internal/runner', './internal/observe', './internal/tui', './internal/projectfile', './internal/instance', '-count=1', '-v', '-timeout=180s'], cwd=root, stdout=log, stderr=subprocess.STDOUT, check=True)
+        subprocess.run(['go', 'vet', './cmd/prs', './internal/core', './internal/runner', './internal/observe', './internal/tui', './internal/projectfile', './internal/instance'], cwd=root, stdout=log, stderr=subprocess.STDOUT, check=True)
     reports = []
     with tempfile.TemporaryDirectory(prefix='linux-server-build-', dir=work) as directory:
         temporary = Path(directory)
@@ -61,6 +63,7 @@ def main():
         for report in reports:
             os.replace(temporary / report['archive'], output / report['archive'])
     (verification / 'linux-server-build.json').write_text(json.dumps({'passed': True, 'sourceSHA256': before, 'builds': reports}, ensure_ascii=False, indent=2))
+    cleanup.finish()
     print(json.dumps({'passed': True, 'archives': [row['archive'] for row in reports]}))
 
 

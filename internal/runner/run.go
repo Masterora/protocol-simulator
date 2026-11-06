@@ -3,7 +3,9 @@ package runner
 import (
 	"context"
 	"fmt"
+	"gytest-go/internal/projectfile"
 	"log/slog"
+	"reflect"
 	"time"
 
 	"gytest-go/internal/core"
@@ -45,17 +47,16 @@ func run(ctx context.Context, engine *core.Engine, project core.Project, channel
 		}
 		sink.info("stopped", "project", project.Name)
 	}()
-	var plans []dataPlan
-	var err error
-	if opt.startData {
-		plans, err = dataPlans(engine, channels)
-		if err != nil {
-			return err
-		}
+	state, err := newConfigurationState(ctx, engine, project, channels, opt, sink)
+	if err != nil {
+		return err
 	}
-	watcher := newProjectWatcher(opt.project)
+	if observer != nil {
+		observer.SetConfigurationHandler(state.request, state.pointRequest, func() string { return state.revision.Load().(string) })
+		observer.SetRuleHandler(state.ruleRequest)
+	}
 
-	sink.info("starting", "project", project.Name, "channels", len(channels), "data_jobs", len(plans))
+	sink.info("starting", "project", project.Name, "channels", len(channels), "data_jobs", len(state.plans))
 	for _, c := range channels {
 		if err := ctx.Err(); err != nil {
 			return nil
@@ -77,17 +78,27 @@ func run(ctx context.Context, engine *core.Engine, project core.Project, channel
 			return err
 		case message := <-subscription.Messages():
 			forwardMessage(sink, message)
+		case job := <-state.jobs:
+			state.handle(job)
+			if state.deleted {
+				if observer != nil {
+					shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					observer.Shutdown(shutdownCtx)
+					cancel()
+				}
+				return nil
+			}
 		case <-tick.C:
-			if opt.watch {
-				if candidate, changed, watchErr := watcher.poll(); changed {
+			if state.opt.watch {
+				if candidate, changed, watchErr := state.watcher.poll(); changed {
 					if watchErr != nil {
 						sink.emit(logRecord{level: slog.LevelError, message: "reload_rejected", values: []any{"error", watchErr.Error()}})
 					} else {
-						selected, selectErr := selectChannels(candidate.Channels, opt.channels)
+						selected, selectErr := state.selectCandidate(candidate)
 						if selectErr != nil {
 							sink.emit(logRecord{level: slog.LevelError, message: "reload_rejected", values: []any{"error", selectErr.Error()}})
 						} else {
-							ids, restored, reloadErr := engine.ReloadProject(project, candidate, selected)
+							ids, restored, reloadErr := engine.ReloadProject(state.project, candidate, selected)
 							if reloadErr != nil && !restored {
 								return reloadErr
 							}
@@ -96,28 +107,18 @@ func run(ctx context.Context, engine *core.Engine, project core.Project, channel
 								affected[id] = true
 								delete(previous, id)
 							}
-							oldPlans := plans
 							if reloadErr == nil {
-								project = candidate
-								channels = selected
-								sink.info("reloaded", "project", project.Name, "changed_channels", ids)
+								state.project = candidate
+								state.channels = selected
+								if doc, readErr := projectfile.Read(opt.project); readErr == nil && reflect.DeepEqual(doc.Project, candidate) {
+									state.publish(doc)
+								}
+								sink.info("reloaded", "project", state.project.Name, "changed_channels", ids)
 							} else {
 								sink.emit(logRecord{level: slog.LevelError, message: "reload_rolled_back", values: []any{"error", reloadErr.Error()}})
 							}
-							if opt.startData {
-								plans, err = dataPlans(engine, channels)
-								if err != nil {
-									return err
-								}
-								for i := range plans {
-									if !affected[plans[i].channel] {
-										for _, old := range oldPlans {
-											if old.channel == plans[i].channel && old.device == plans[i].device && old.scope == plans[i].scope {
-												plans[i].started = old.started
-											}
-										}
-									}
-								}
+							if err = state.rebuildPlans(nil, affected); err != nil {
+								return err
 							}
 						}
 					}
@@ -136,8 +137,8 @@ func run(ctx context.Context, engine *core.Engine, project core.Project, channel
 					previous[state.ID] = state
 				}
 			}
-			for i := range plans {
-				p := &plans[i]
+			for i := range state.plans {
+				p := &state.plans[i]
 				if p.started || p.protocol == "iec104" && states[p.channel].ReadyPeers == 0 {
 					continue
 				}

@@ -9,6 +9,7 @@ IEC104、Modbus TCP/RTU 规约调试与模拟工具。桌面版提供点表、�
 - [自动数据与上报规则](#自动数据与上报规则)
 - [完整示例](#完整示例)
 - [热加载与多工程](#热加载与多工程)
+- [Docker 部署](#docker-部署)
 - [日志](#日志)
 - [systemd 托管](#systemd-托管)
 - [支持范围与开发](#支持范围与开发)
@@ -28,14 +29,16 @@ IEC104、Modbus TCP/RTU 规约调试与模拟工具。桌面版提供点表、�
 
 - **macOS**：打开 DMG，将应用拖到 Applications，推出镜像后从“应用程序”启动。指南和示例位于镜像的“资料”文件夹。当前使用本地签名；如系统阻止打开，可在“系统设置 → 隐私与安全性”中允许打开。
 - **Windows**：运行 Setup，按当前用户安装，并创建快捷方式和卸载入口。缺少 WebView2 时会联网安装微软运行时。
-- **Linux 桌面**：运行 `sudo apt install ./protocol-simulator-desktop-linux-amd64.deb`，ARM64 改用 arm64 包，再从应用菜单启动。
-- **Linux 服务器**：按下文解压，使用 `./bin/prs`；安装命令链接后可直接输入 `prs`，不影响系统 `ps`。
+- **Linux 桌面**：在下载目录运行 `sudo apt install ./protocol-simulator-desktop-linux-amd64.deb`，ARM64 改用 arm64 包，再从应用菜单启动。覆盖升级使用同一命令；卸载用 `sudo apt remove protocol-simulator`，用户自行保存的工程保留。
+- **Linux 服务器**：可直接解压运行，或按 [当前用户安装](#当前用户安装与用户服务) / [系统级安装](#系统级安装与服务) 常驻运行；命令名为 `prs`，不影响系统 `ps`。
+
+服务器包只含程序、说明、服务模板和示例，不包含其他服务器的工程。迁移时额外复制工程 JSON，例如现有部署的 `~/.config/protocol-simulator/gateway.json`；检查监听地址、端口、串口路径，并让网关连接新服务器 IP。`x86_64` 选择 amd64 包，`aarch64` / `arm64` 选择 arm64 包。
 
 ## 桌面版
 
 ### 快速开始：模拟 IEC104 子站
 
-1. 启动后在顶部切换到“子站”。打开“通道设置”，选择 TCP 服务端，填写监听 IP 和端口。
+1. 启动后在顶部切换到“子站”。打开“通道设置”，选择 TCP Server，填写监听 IP 和端口。
 2. 点击装置列表右侧的 **＋**，选择 IEC104，填写公共单元地址和四遥点位。遥测默认使用短浮点。
 3. 在遥信或遥测页打开“自动上报配置”，点击 **＋** 添加规则，填写类型、点位、周期与方式，保存。新工程和新装置默认没有规则。
 4. 点击“连接”启动子站监听，让主站按相同的 IP、端口、公共单元地址和点位类型接入，并激活 IEC104 链路。
@@ -47,11 +50,70 @@ IEC104、Modbus TCP/RTU 规约调试与模拟工具。桌面版提供点表、�
 
 ### 常用操作
 
+- **装置与通道**：双击装置或从右键菜单进入配置；通道从右键菜单删除，并确认删除目标。
 - **遥控、遥调**：IEC104 主站支持选择、执行、撤销、直控和自动任务；子站可将遥控绑定到遥信，将遥调绑定到遥测，执行后修改绑定值并反馈。选择、撤销、否认和不应答不会改变绑定值。
+
+桌面端的遥控、遥调页均显示“绑定点位”列。子站可点击工具栏或表格中的“绑定点位”编辑绑定，主站的该列只读，未配置时显示 `—`。
+
 - **Modbus 数据**：主站读取线圈、离散量和寄存器，写入线圈或保持寄存器；子站的“自动数据配置”修改点值，由主站轮询读取。
 - **点表**：单击单元格编辑，Enter 提交，Esc 取消。搜索匹配点位或描述，每页最多 100 条；批量点位可写成 `1，3-5，8`。
 - **通信**：有效的配置更改会断开对应通道，之后手动重连。在线修改点值、品质或批量设值保持连接；主站本地点值编辑不发送协议帧。
 - **报文**：按连接地址、方向和通道筛选，可导出 CSV。暂停显示不会停止通信。
+
+### 点表导入导出
+
+选中装置，在点表工具栏打开“导入 / 导出”。支持 CSV、TSV（`.txt` 也按制表符读取）、JSON 和 Excel XLSX。CSV/TSV 使用 UTF-8，可带 BOM；XLSX 读取第一个工作表，只接受数值或文本单元格，公式请先粘贴为数值。不支持旧版 `.xls` 和缺少格式说明的原工具 C2 文件。
+
+1. 选择文件和缺省类型；文件包含类型列时使用文件中的类型。
+2. 选择“合并，同地址覆盖”“替换所选类型”或“替换装置全部点表”。预览显示新增、覆盖、删除数量及前 100 行；确认前校验全部点位、地址、数值和关联配置。
+3. 确认导入后，仅停止当前通道，其他通道和工程继续运行。保存工程，再手动重连。预览之后工程配置发生变化，需要重新预览。
+4. 导出可选装置全部点位或当前分类，再选 XLSX、CSV、TSV 或 JSON，指定保存位置。
+
+同类型、同地址视为同一个点位。可用表头如下；`kind` 和 `address` 为核心列，缺少 `kind` 时使用界面选择的缺省类型，其余列可省略。
+
+| 列                                                       | 含义 / 示例                                                                                    |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `kind` / 类型                                            | `yx` 遥信、`yc` 遥测、`yk` 遥控、`yt` 遥调；Modbus 使用 `coil`、`discrete`、`holding`、`input` |
+| `address` / 点号                                         | 十进制、`0x4001` 或 `4001H`                                                                    |
+| `name` / 描述                                            | 点位名称，可含中文                                                                             |
+| `value` / 数值                                           | 有限数值，例如 `220.5`                                                                         |
+| `quality` / 品质                                         | 品质字节，默认 0                                                                               |
+| `wireType` / 104类型                                     | 例如短浮点遥测 `13`，必须符合装置协议                                                          |
+| `dataType`、`byteOrder`                                  | Modbus 数据类型、字节序，按装置支持的格式填写                                                  |
+| `tab`、`timestamp`、`timeInvalid`、`feedback`、`updated` | 分类、时标、时间无效标志、反馈、更新时间；可由本工具导出后保留                                 |
+
+示例：[desktop-points.csv](examples/desktop-points.csv)。JSON 点表是点位对象数组，不是完整工程；完整工程仍通过“打开”载入。导出保留点位元数据。CSV/TSV 对可能被表格软件识别为公式的文本加单引号，本工具重新导入时还原。
+
+### 报文自动应答与循环发送
+
+在 RAW 通道的报文区域打开“自动化”。IEC104、Modbus 使用自身的协议处理，不提供这两个 RAW 任务入口。先配置通道并连接，再在自动化窗口保存配置、分别点击“启动”。保存配置和重新打开工程均不会自动启动任务；最后保存工程才能持久保留配置。
+
+- **分帧**：TCP / 串口可选静默间隔、固定长度、结束符或接收块。TCP 一次读取不保证是一整帧，通常选择前三种；结束符包含在匹配报文内。UDP 按数据报处理。
+- **自动应答**：添加规则，启用后填识别起始字节（从 0 开始）、识别内容 HEX、应答报文及格式。按列表顺序，第一条匹配的规则生效；只回复请求来源，不广播到其他连接。支持应答延迟和追加 SUM8、XOR8、Modbus CRC16（低字节或高字节在前）。
+- **循环发送**：添加多行 HEX 或 UTF-8 文本，勾选启用项。指定序号留空时按列表顺序发送全部启用行；`2,1,3-5` 按填写顺序发送，序号从 1 开始。报文间隔控制相邻报文，循环周期控制每轮的最短周期，0 表示不额外等待；循环次数 0 表示持续发送。
+- **停止与编辑**：两个任务独立启停。停止任务保持通道连接；修改配置前先停止两个任务。关闭自动化窗口保持任务运行，停止对应通道或关闭所属工程会停止任务；其他独立工程不受影响。发送错误会停止该发送任务并显示原因。
+
+[desktop-raw-tools.json](examples/desktop-raw-tools.json) 是本机应答示例：先连接 RAW Server，再连接 RAW Client。服务端启动“自动应答”，客户端启动“循环发送”，发送 `01 03` 后收到 `01 03 02 00 2A`。示例各发送 3 轮；载入不会自动连接或发送。
+
+主界面手动发送也可选择 HEX 或 UTF-8 文本；只有点击发送才会发送。
+
+### 工具箱
+
+顶部“工具箱”的每个分类分别保留输入和选项。可用“填入示例”载入对应格式，也可按 Ctrl+Enter（macOS 上也可用 ⌘+Enter）运行。结果可完整复制。
+
+| 分类               | 可用功能                                                                                                                                                                                                                                                                   |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 数值转换           | 整数进制、位掩码分析、2/4/8 字节寄存器的有符号和无符号解释、Float32/64 双向转换。4 字节支持 ABCD、DCBA、CDAB、BADC                                                                                                                                                         |
+| 编码转换           | UTF-8、GBK、GB18030、UTF-16LE/BE 与 HEX 互转                                                                                                                                                                                                                               |
+| 文本处理           | HEX 格式化、偏移转储、字节倒序、Base64 与文本或 HEX 互转、URL、JSON 格式化和压缩、字符串转义                                                                                                                                                                               |
+| 时间戳             | 实时 Unix 时间戳，默认毫秒，可切换秒。与日期时间双向转换，默认 UTC+8，可切换 UTC                                                                                                                                                                                           |
+| 报文解析 · IEC 104 | 解析一帧标准 HEX APDU，分组显示帧头、控制域、ASDU、点值、品质、时标和控制语义。也可单独解析 CP56Time2a                                                                                                                                                                     |
+| 报文解析 · Modbus  | RTU / TCP / ASCII 单帧解析，分别选择请求或响应。常用功能码 01–06、0F、10、16、17 显示字段，其他功能保留原始数据区。可按 01–04 表单生成读取报文，也可输入站号、功能码和数据进行封装。“带入解析”会保留报文格式，自动解析生成的读取请求，或将通用封装结果填入解析区供选择方向 |
+| IPv4 网段          | 输入 CIDR，例如 `192.168.1.25/24`，查看网络、掩码、广播地址和可用范围                                                                                                                                                                                                      |
+
+例如生成 Modbus RTU 读保持寄存器请求，填站号 `1`、起始点位 `0`、数量 `1`，得到 `01 03 00 00 00 01 84 0A`。所有转换均在本地执行。
+
+参考 [CyberChef](https://gchq.github.io/CyberChef/)、[Modbus 官方规范](https://www.modbus.org/modbus-specifications)、[Wireshark Modbus 字段参考](https://www.wireshark.org/docs/dfref/m/modbus.html)。
 
 ### 保存与更新
 
@@ -80,9 +142,9 @@ cd protocol-simulator-server
 ./bin/prs run examples/server-iec104.json --start-data-rules --log-format json
 ```
 
-示例默认监听本机；远程主站接入时将工程的监听地址改为可回连的网卡地址，或 `0.0.0.0:24040`。主站连接的是服务器实际 IP。
+示例默认监听本机；远程主站接入时将工程的监听地址改为可回连的明确网卡地址，例如 `192.168.1.10:24040`。主站连接同一个服务器 IP。
 
-`run` 默认启动全部通道并开启热加载，自动数据规则默认不启动，需显式加上 `--start-data-rules`。工程文件只读，运行点值不会写回 JSON。前台按 Ctrl+C 或发送 SIGTERM 正常退出并释放连接、端口和串口。TCP 客户端在未连接时持续等待和重试，直到停止。
+`run` 默认启动全部通道并开启热加载，自动数据规则默认不启动，需显式加上 `--start-data-rules`。工程文件只读，运行点值不会写回 JSON。前台按 Ctrl+C 或发送 SIGTERM 正常退出并释放连接、端口和串口。TCP Client在未连接时持续等待和重试，直到停止。
 
 ### 全部命令
 
@@ -147,30 +209,40 @@ prs tui
 
 界面只连接已有进程，不会重复启动工程。启动后自动选择有效工程、通道和装置；直接按数字键或输入资源命令即可查看，切换工程时使用工程列表中的高亮行。每个工程使用独立 Unix socket；退出、Ctrl+C、界面崩溃或观测连接中断都不会停止工程通信。支持通过 SSH 使用，终端至少 60 列、12 行。
 
-| 按键                                                                                | 操作                                                                                 |
-| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `1`–`7`、Tab                                                                        | 工程、通道、装置、点位、规则、报文、日志视图                                         |
-| Enter                                                                               | 进入工程 → 通道 → 装置 → 点位；点位、规则、报文、日志打开详情                        |
-| `v`                                                                                 | 任意列表查看完整详情；报文显示带偏移的十六进制转储                                   |
-| `f` / `l`                                                                           | 直接查看当前通道报文 / 工程日志                                                      |
-| ↑/↓、g/G                                                                            | 移动选择、到首行或末行                                                               |
-| ←/→                                                                                 | 切换点位分类；切换后清除筛选并回到该类第一页                                         |
-| `/` 输入文字后 Enter                                                                | 搜索当前视图，支持中文与大小写不敏感匹配                                             |
-| Esc                                                                                 | 取消输入、关闭详情、清除搜索或返回上层                                               |
-| PgUp/PgDn、`[`/`]`                                                                  | 点位按分类分页，每页 100 条；其他列表翻页                                            |
-| `e` / `s`                                                                           | 点位页修改数值、品质 / 立即上报；修改表单用 Tab 或 ↑↓ 切换字段，Enter 应用，Esc 取消 |
-| `p` / 空格                                                                          | 暂停或恢复界面刷新，工程持续运行                                                     |
-| `?` / Ctrl+A                                                                        | 快捷键与资源别名帮助，支持上下滚动                                                   |
-| `:projects` / `:channels` / `:devices` / `:points` / `:rules` / `:frames` / `:logs` | 切换视图                                                                             |
-| `q`、Ctrl+C、`:q`                                                                   | 退出界面，保留工程运行                                                               |
+| 按键                     | 操作                                               |
+| ------------------------ | -------------------------------------------------- |
+| Enter / `i`              | 进入或查看详情 / 工程、通道、装置页查看详情        |
+| `n` / `e` / `x`、Delete  | 新增 / 编辑完整配置 / 永久删除                     |
+| `v` / `s`                | 点位改值和品质 / 立即上报所选数据点                |
+| `r`                      | 规则页按状态切换任务：启动 / 停止 / 恢复           |
+| `c`                      | 通道连接或停止                                     |
+| `1`–`7`、Tab / Shift+Tab | 按工程、通道、装置、点位、规则、报文、日志顺序切换 |
+| ↑↓、Home/End、PgUp/PgDn  | 移动选择、首尾、翻页；点位每页 100 条              |
+| ←→                       | 点位分类；表单内切换选项                           |
+| `/` / `:`                | 搜索 / 输入资源命令                                |
+| `f` / `l` / `g`          | 当前通道报文 / 工程日志 / 跟随最新记录             |
+| 空格                     | 表单中打开选项                                     |
+| Esc                      | 逐层取消输入、选项、确认、详情或返回上层           |
+| `?` / F1                 | 快捷键帮助                                         |
+| `q`、Ctrl+C、`:q`        | 退出界面，保留工程运行                             |
 
-资源命令支持中文名称，例如 `:工程`、`:通道`、`:装置`、`:点位`、`:规则`、`:报文`、`:日志`；原有英文命令和简写继续兼容。资源命令支持简写：`:prj`、`:ch`、`:dev`、`:pt`、`:r`、`:f`、`:l`。报文与日志默认跟随最新记录，按上下方向键停止跟随，按 `G` 恢复。详情窗按所选记录的标识持续刷新并保持滚动位置，Esc 返回列表。
+桌面自动规则编辑器的“下限 / 固定值”列：固定值模式使用该列作为固定输出值，区间模式使用该列作为下限。主窗口“开启/关闭自动上报（自动数据）”控制任务启动和停止，运行后可用“暂停任务/恢复任务”；报文区域的暂停只影响报文显示。
 
-界面每 250 毫秒尝试从运行进程读取一次最新状态；请求延迟可能延长实际刷新间隔。状态栏显示最近一次成功刷新时间。自动生成、手动修改和协议接收产生的新值都随下一次刷新显示；界面不等待自动规则周期。自动规则周期仅决定何时产生下一次自动变化，手动操作不会暂停或重置该规则。`p` / 空格暂停显示时，数值和界面更新时间保持不变，后台通信和自动上报继续；恢复后读取最新状态。暂停和恢复同时作用于列表与详情窗。点位、品质、通道状态和规则执行次数在详情中实时变化；报文、日志按记录编号保持选中，历史记录被淘汰时明确提示，不自动切换到另一条记录。
+终端绑定操作：进入子站装置的点位页，选中遥控／遥调点位后按 `e`。在“编辑点位”中直接输入“绑定遥信点位”或“绑定遥测点位”，例如 `301-302`；不连续的点位写作 `301,311`。遥控的反向目标单独填入“反向遥信点位”，例如充电桩 `25001` 的反向目标为 `201`。留空取消该输入框对应的绑定；同一目标不能同时正向和反向绑定，所有目标必须已存在于同一装置。Modbus 不同寄存器类型分开输入，避免点位编号相同时混淆。`Enter` 将点位字段与绑定一起原子保存到工程 JSON 并生效，输入错误时保留草稿；`Esc` 取消。不新增绑定快捷键。绑定保存不会发送遥控、遥调命令，也不会重启通道或重置自动规则。点位表“绑定点位”列实时显示结果。IEC104 步调节归入遥调，配置保存在 `devices[].configuration.controls.yk/yt.mappings`，与桌面共用。
 
-点位视图中，遥信、遥测、遥控、遥调独立显示，按左右方向键切换；Modbus 的保持寄存器、输入寄存器、线圈、离散输入也分别显示。各分类按地址数值升序排列，先分类和排序再分页，搜索仅作用于当前分类。顶部显示分类数量，搜索时另显示匹配数量；分页仅在表格底部显示。当前页面与分类用颜色强调；底部显示快捷键提示、实时状态、历史缺口和最近更新时间。点位列表显示实时值和品质，规则视图显示配置、状态和执行次数；报文视图显示 RX/TX 十六进制数据，Enter 可展开长报文；日志视图显示运行事件、协议提示及热加载结果。历史有界，界面保留最近 1000 条记录；暂停或断开过久时可能跳过旧记录，界面会显示服务端历史缺口计数。
+规则页用 `r` 切换当前选中的一条规则：运行中停止，已暂停时恢复，其他状态启动。筛选后仍只操作选中行；同装置其他规则的状态、执行次数和定时周期保持不变。状态列显示各条规则的实时状态，底部提示随选中规则显示“启动规则”“停止规则”或“恢复规则”，无需菜单。快捷键只控制本次运行，不修改配置中的“启用”开关；即使配置未启用，也可手动启动所选规则，重启工程后仍按原配置。`s` 仅在点位页立即上报所选数据点。界面始终实时刷新。旧工程服务需升级并重新启动后才能单独控制规则。
 
-工程默认在 `PRS_RUNTIME_DIR` 指定目录创建 socket；未设置时使用 `$XDG_RUNTIME_DIR/protocol-simulator`，再回退到系统临时目录下的 `protocol-simulator-UID`。默认目录及 socket 仅所属用户可访问；自定义目录不得为符号链接，也不得允许组或其他用户写入。两端可以同时用 `--runtime-dir DIR` 指向同一目录。界面只允许明确触发的数据点修改和立即上报，不提供通道或规则启停；配置继续通过 JSON 热加载管理。运行中的旧版本仍保持只读，更新其服务进程后才能使用新操作。
+字母快捷键不区分大小写，例如 `e` 与 `E` 均为编辑配置，`v` 与 `V` 均为改值；不再用大小写区分功能。名称、路径、数值和搜索文本保留输入原样。顶部集中显示筛选、帮助和退出等通用操作；底部按当前页面或弹窗显示可用操作，按键用亮色区分。连接中的通道提示“停止”，停止的通道提示“连接”；窄终端优先保留详情、编辑、删除、改值、上报和分类，次要操作可在 `?` 帮助中查看。表单输入时只提示表单操作及 Ctrl+C 退出界面，避免把输入字母误认为全局命令。
+
+资源命令支持中文名称，例如 `:工程`、`:通道`、`:装置`、`:点位`、`:规则`、`:报文`、`:日志`；原有英文命令和简写继续兼容。资源命令支持简写：`:prj`、`:ch`、`:dev`、`:pt`、`:r`、`:f`、`:l`。通道列表的“角色”列显示主站或子站，“连接方式”列统一显示 TCP Client、TCP Server、UDP 或串口，支持按角色与连接方式搜索；选中通道后，顶部显示“通道名 · 主站/子站”，进入点位、报文等页面后仍可看到角色。角色取自工程的 `role` 字段，与 TCP 连接方向分别设置。报文与日志默认跟随最新记录，按上下方向键停止跟随，按 `g` 恢复。详情窗按所选记录的标识持续刷新并保持滚动位置，Esc 返回列表。
+
+界面每 250 毫秒尝试从运行进程读取一次最新状态；请求延迟可能延长实际刷新间隔。底部显示所选工程的累计运行时长。自动生成、手动修改和协议接收产生的新值都随下一次刷新显示；界面不等待自动规则周期。自动规则周期仅决定何时产生下一次自动变化，手动操作不会暂停或重置该规则。列表与详情窗始终读取最新状态。点位、品质、通道状态和规则执行次数在详情中实时变化；报文、日志按记录编号保持选中，历史记录被淘汰时明确提示，不自动切换到另一条记录。
+
+点位视图中，遥信、遥测、遥控、遥调独立显示，按左右方向键切换；Modbus 的保持寄存器、输入寄存器、线圈、离散输入也分别显示。各分类按点位编号升序排列，先分类和排序再分页，搜索仅作用于当前分类。分类在点位表格标题栏显示，当前分类用颜色强调；各列表以无表头序号列编号，点位跨页连续编号，不显示数量和分页统计。当前页面与分类用颜色强调；底部显示快捷键提示、工程运行时长、操作或连接异常提示；右下角为应用全称，其下为署名。运行时长显示为 `Nd HH:MM:SS`，例如 `0d 23:59:59` 后为 `1d 00:00:00`；从所选工程进程启动开始计算，切换工程时随之变化，关闭、重开查看器或跨午夜不会归零。点位列表显示实时值和品质，规则视图显示配置和各条规则的实时状态；报文视图显示 RX/TX 十六进制数据，Enter 可展开长报文；日志视图显示运行事件、协议提示及热加载结果。历史有界，界面保留最近 1000 条记录；断开过久时可能跳过旧记录。
+
+桌面端和 `prs tui` 点位表在“描述”前显示只读“上报时间”。它记录本次工程进程内最近一次该点位的实际通信：遥信、遥测的上报收发，遥控、遥调的命令或响应；Modbus 则记录对应点位的成功读写通信。相同数值再次通信也会更新时间，界面刷新、离线改值、未发出的排队报文不会更新时间；尚未通信显示 `—`。macOS、Windows、Linux 桌面端和服务器终端的所有装置共用此列，IEC104 四遥及 Modbus 各类点位统一显示 `HH:mm:ss`，不显示毫秒。终端默认使用系统时区，也可用 `TZ=Asia/Shanghai prs tui` 指定显示时区，按 Enter 查看完整日期和时间（`YYYY-MM-DD HH:mm:ss`）。桌面端沿用通信端的时区，悬停可查看完整日期和时区。此时间与报文内的事件时间分开，仅用于运行显示，不写入配置；重启工程后重新记录。
+
+工程默认在 `PRS_RUNTIME_DIR` 指定目录创建 socket；未设置时使用 `$XDG_RUNTIME_DIR/protocol-simulator`，再回退到系统临时目录下的 `protocol-simulator-UID`。默认目录及 socket 仅所属用户可访问；自定义目录不得为符号链接，也不得允许组或其他用户写入。两端可以同时用 `--runtime-dir DIR` 指向同一目录。界面支持显式新增、编辑和保存工程配置，以及数据点修改和立即上报。配置编辑需要同一用户对工程文件及其目录有写权限；只读挂载仍可观测和立即上报，保存会明确报错。更新正在运行的服务进程后才能使用新增配置功能。
 
 systemd 模板使用 `/run/protocol-simulator`，与 PrivateTmp 隔离无关。查看其工程时使用有权限的用户，例如：
 
@@ -182,11 +254,11 @@ sudo /opt/protocol-simulator/bin/prs tui --runtime-dir /run/protocol-simulator
 
 ### 手动修改与立即上报
 
-在点位页选中遥信、遥测或 Modbus 数据点，按 `e` 编辑数值和品质；输入会替换当前字段，Tab / ↑↓ 切换字段，Ctrl+U 清空，Enter 应用，Esc 取消。仅提交实际编辑的字段，例如只改品质时保留后台最新数值。IEC104 子站在连接激活后立即上报；未连接时明确显示“已修改，未上报”。Modbus 不主动发报，主站下次读取时得到新值。
+在点位页选中遥信、遥测或 Modbus 数据点，按 `v` 编辑数值和品质；数值可直接输入，品质与开关量可按空格打开选择列表；Tab / Shift+Tab / ↑↓ 切换字段，Ctrl+U 清空输入，Enter 保存，Esc 取消。仅提交实际编辑的字段，例如只改品质时保留后台最新数值。IEC104 子站在连接激活后立即上报；未连接时明确显示“已修改，未上报”。Modbus 不主动发报，主站下次读取时得到新值。
 
 在 IEC104 子站的数据点上按 `s`，立即上报该点此刻的最新数值和品质，不改变点值，也不广播整个装置。服务器入口不下发遥控、遥调；对应点位不能通过此入口修改或发送。
 
-自动规则保持运行。自动、手动和协议更新按实际发生顺序应用，列表和详情持续显示最新值；手动值随后可能被自动规则更新。手动操作只改变运行状态，不写回 JSON，不影响其他工程。
+自动规则保持运行。自动、手动和协议更新按实际发生顺序应用，列表和详情持续显示最新值；手动值随后可能被自动规则更新。显式点值和品质修改默认将所填字段原子保存到工程 JSON；只改品质不会把后台自动变化的数值一起保存。自动生成和协议接收仍只改变运行状态，不影响其他工程。CLI 可用 `--runtime-only` 明确选择不保存的点值修改。
 
 脚本调用须明确指定运行工程 PID（见 TUI 工程页）、通道 ID、装置 ID、类型和点地址。下例使用 `examples/server-iec104.json` 的标识；将 PID 替换为实际值：
 
@@ -200,7 +272,54 @@ prs point report --pid "$PROJECT_PID" --channel iec104-server --device device-1 
   --kind yc --address 16385 --json
 ```
 
-`--value` 和 `--quality` 至少提供一项；品质为 0–255，地址支持十进制和 `0x` 十六进制。可用 `--runtime-dir DIR` 指定观测目录。命令自动读取当前配置版本；配置变更、目标消失或不合法数值会被拒绝。退出码 `2` 表示参数错误，`1` 表示操作失败；断网或上报部分失败时不会自动重试，请先核对最新状态。JSON 结果中的 `applied` 表示运行值是否已修改，`receivers` 是实际上报成功的连接数，`mode` 区分 `reported`、`offline` 和 `polled`。
+`--value` 和 `--quality` 至少提供一项；品质为 0–255，地址支持十进制和 `0x` 十六进制。可用 `--runtime-dir DIR` 指定观测目录。命令自动读取当前配置版本；配置变更、目标消失或不合法数值会被拒绝。退出码 `2` 表示参数错误，`1` 表示操作失败；断网或上报部分失败时不会自动重试，请先核对最新状态。JSON 结果中的 `saved` 表示配置是否保存，`path` / `revision` 是文件路径和修订号；`applied` 表示运行值是否已修改，`receivers` 是实际上报成功的连接数，`mode` 区分 `reported`、`offline` 和 `polled`。
+
+### 新增工程、通道、装置、点位与自动上报
+
+在工程、通道、装置、点位、规则页按 `n` 新增，按 `e` 编辑选中项；点位页同样用 `e` 编辑点位、类型、描述和协议元数据，用 `v` 修改数值和品质。表单内 Tab / Shift+Tab / ↑↓ 切换字段，←/→ 快速切换选项，空格打开选择列表，列表内 ↑↓ / PgUp/PgDn 选择、Enter 确认、Esc 返回表单；表单内 Enter 保存、Esc 放弃；轮询不会覆盖输入。新装置默认 50 点，新上报规则默认禁用。规则周期范围为 200–3600000ms，点位范围可填 `1,3-8`；明确启用后才运行，Modbus 数值变化由主站读取。
+
+新工程和新增通道默认使用当前主机活动网卡上的明确 IPv4 地址；未发现可用网卡时使用 `127.0.0.1`。通道监听地址可按空格选择目标服务器的网卡地址，保留原端口，也可直接编辑。迁移到其他主机后应选择新主机的地址。小终端中的弹窗会为当前字段保留空间，长输入显示正在编辑的末尾；省略号表示内容被截断。操作结果短暂优先显示在状态栏，随后恢复刷新时间。
+
+协议、主站/子站、连接方式、串口参数、点位类型、104 报文类型、品质、寄存器格式、字节序和自动上报选项显示中文标签，通过选择填写。104 类型随点位类型联动，连接方式随协议联动；名称、IP/端口、点位、范围和数值仍可输入。波特率可选常用值，也保留自定义值；串口可选择本机已发现的端口。选择列表确认只修改表单草稿，按 Enter 保存表单后才生效；Esc 逐层取消，不保存。
+
+在工程、通道、装置、点位和规则页按 `x` 或 Delete 删除选中项。确认窗口显示目标及影响范围，默认取消；切换到“永久删除”并按 Enter 才提交。删除不可恢复，不进入回收站。工程删除停止对应进程并删除工程文件；通道删除停止该通道，并删除其装置、点位及规则；装置删除包含其点位和规则。点位若仍被自动上报或关联引用，需先解除引用。其他工程和无关通道继续运行。确认后若配置已被其他操作修改，删除会被拒绝并要求刷新。旧服务需要升级运行进程后才能删除。
+
+CLI 显式删除命令示例（工程删除必须使用 `--pid`；其他配置也可用 `--file` 离线保存）：
+
+```bash
+prs rule delete --pid "$PROJECT_PID" --channel CHANNEL_ID --device DEVICE_ID --index 1
+prs point delete --pid "$PROJECT_PID" --channel CHANNEL_ID --device DEVICE_ID --kind yc --address 16385
+prs device delete --pid "$PROJECT_PID" --channel CHANNEL_ID --device DEVICE_ID
+prs channel delete --pid "$PROJECT_PID" --channel CHANNEL_ID
+prs project delete --pid "$PROJECT_PID"
+```
+
+新工程保存在表单指定的 JSON 路径，启动独立后台进程，初始仅有停止的通道1；退出 TUI 不会关闭工程。新增通道和修改通信参数的通道也保持停止，在通道页按 `c` 手动连接。点表、描述、点值和规则编辑保留现有传输连接；其他工程继续运行。
+
+CLI 同样支持配置管理（将 PID、通道和装置标识替换为实际值）：
+
+```bash
+# 新建文件并启动独立工程，返回 PID；文件已存在时拒绝覆盖
+prs project new ./工程2.json --name 工程2 --start --json
+# 运行中的工程优先按 PID 操作，确认文件和运行状态同步
+prs channel add --pid "$PROJECT_PID" --set name=通道2 --set address=127.0.0.1:2405 --json
+prs device add --pid "$PROJECT_PID" --channel CHANNEL_ID --set name=装置1 --set pointCount=50 --json
+prs point add --pid "$PROJECT_PID" --channel CHANNEL_ID --device DEVICE_ID \
+  --kind yc --address 101 --set count=5 --set name=温度 --json
+prs point edit --pid "$PROJECT_PID" --channel CHANNEL_ID --device DEVICE_ID \
+  --kind yc --address 101 --set name=出口温度 --set wireType=13 --json
+prs rule add --pid "$PROJECT_PID" --channel CHANNEL_ID --device DEVICE_ID \
+  --set kind=yc --set points=101-105 --set mode=report --set intervalMs=1000 --set enabled=true --json
+prs rule edit --pid "$PROJECT_PID" --channel CHANNEL_ID --device DEVICE_ID \
+  --index 1 --set intervalMs=2000 --json
+prs channel start --pid "$PROJECT_PID" --channel CHANNEL_ID
+prs channel stop --pid "$PROJECT_PID" --channel CHANNEL_ID
+prs project edit --pid "$PROJECT_PID" --set name=现场工程
+```
+
+配置使用修订号检查，拒绝覆盖其他终端刚保存的修改；CLI 可传 `--revision SHA256` 固定预期版本。保存失败不修改运行状态；保存后上报失败会分别报告保存结果和通信结果。只保存显式字段及必要的格式规范化，不把自动变化的实时快照写入文件。
+
+未运行的工程可以将 `--pid PID` 换为 `--file PATH` 离线编辑；该模式只确认文件保存，不确认运行状态。`prs run FILE --channels none` 可加载工程并保持所有通道停止。自建工程后台日志位于用户缓存目录下的 `protocol-simulator/server-logs/`；长期服务仍可按下文配置 systemd。Docker 内使用配置编辑时，应将配置**目录**以可写方式挂载，并给运行 UID 65532 文件及目录写权限；自动热加载和只读观测场景可继续使用只读挂载。
 
 ## 工程 JSON 与点位
 
@@ -218,7 +337,7 @@ prs point report --pid "$PROJECT_PID" --channel iec104-server --device device-1 
 | 通道 | `role`                                   | `server` 子站或 `client` 主站；与传输连接方向分别设置                                         |
 | 通道 | `transport`                              | `tcp-server`、`tcp-client`、`udp`、`serial`，组合限制见下表                                   |
 | 通道 | `address`                                | 网络端点，如 `127.0.0.1:24040`、`[::1]:24040`；串口则填 `/dev/ttyUSB0` 等设备路径             |
-| 通道 | `localAddress`                           | TCP 客户端或 UDP 的可选本地绑定地址，含端口；留空由系统选择                                   |
+| 通道 | `localAddress`                           | TCP Client或 UDP 的可选本地绑定地址，含端口；留空由系统选择                                   |
 | 通道 | `timeoutMs`                              | 超时毫秒数，默认 `3000`，范围 100–60000                                                       |
 | 通道 | `baud`、`parity`、`dataBits`、`stopBits` | 串口参数，默认 `9600`、`N`、`8`、`1`；波特率 50–4000000，校验 `N/E/O`，数据位 5–8，停止位 1/2 |
 | 通道 | `devices`                                | 装置列表，最多 256 个；IEC104 每通道一个装置，RAW 使用空数组                                  |
@@ -235,7 +354,7 @@ prs point report --pid "$PROJECT_PID" --channel iec104-server --device device-1 
 | `modbus-rtu`           | `serial`，也支持 TCP 字节流 `tcp-server` / `tcp-client` |
 | `raw`                  | `tcp-server` / `tcp-client` / `udp` / `serial`          |
 
-TCP 服务端 `address` 是本地监听端点；TCP 客户端或 UDP 的 `address` 是对端。网络地址必须包含主机和端口，串口运行前用 `prs ports` 确认设备及权限。
+桌面端与服务器终端使用相同的连接方式文案：TCP Client、TCP Server、UDP、串口。TCP Server的 `address` 显示为“监听地址”；TCP Client或 UDP 的 `address` 显示为“目标地址”；串口显示为“串口路径”。UDP 的 `localAddress` 显示为“监听地址”，TCP Client的可选 `localAddress` 显示为“本地绑定”。主站/子站是协议角色，与客户端/服务端的 TCP 连接方向独立设置。网络地址必须包含主机和端口，串口运行前用 `prs ports` 确认设备及权限。
 
 兼容字段：通道级 `points`、`unit`、`commonAddress` 用于旧工程，新配置优先放在 `devices` 中；`transportDraft` 是桌面传输表单草稿。装置级 `autoData` 是旧版统一自动数据格式；没有 `dataTests` 时仍会读取。不要将旧结构与新结构混写来覆盖同一份配置。
 
@@ -517,9 +636,113 @@ prs run /etc/protocol-simulator/site-a.json --start-data-rules
 prs run /etc/protocol-simulator/site-b.json --start-data-rules
 ```
 
-以上分别在两个终端运行；常驻服务使用两个 systemd 实例。容器部署建议将配置所在目录只读挂载给程序，再传入容器内的工程路径；单文件 bind mount 可能继续指向被原子替换前的旧文件。当前交付为独立二进制压缩包，不包含预构建容器镜像。
+以上分别在两个终端运行；常驻服务使用两个 systemd 实例，或按 [Docker 部署](#docker-部署) 使用独立容器。容器应只读挂载配置所在目录；单文件 bind mount 可能继续指向被原子替换前的旧文件，导致热加载无法识别新配置。
 
 `--watch=false` 可关闭热加载。热加载只作用于工程 JSON；CLI 参数和 systemd 的 `.env` 变更需重启对应进程或实例。
+
+## Docker 部署
+
+镜像仅包含服务器命令 `prs`、示例和第三方许可，不包含桌面界面。Dockerfile 使用 Go 交叉编译，支持 `linux/amd64` 和 `linux/arm64`；版本仍取自 `wails.json`。镜像以 UID/GID `65532:65532` 运行，没有 shell，配置目录及工程文件需要允许该用户读取。
+
+### 本地构建
+
+在源码根目录使用 Docker Buildx 构建当前架构的镜像，并检查版本和示例配置。
+
+```bash
+docker buildx build --load -t protocol-simulator:local .
+docker run --rm protocol-simulator:local version
+docker run --rm protocol-simulator:local validate /examples/server-iec104.json --json
+```
+
+### 构建并上传 Docker Hub
+
+目标仓库：[derorange/protocol-simulator](https://hub.docker.com/r/derorange/protocol-simulator)。先以具有该仓库写权限的账户登录；`docker login` 的认证在终端或浏览器完成。
+
+```bash
+docker login
+
+# 创建构建器，仅首次执行；后续使用 docker buildx use prs-builder
+docker buildx create --name prs-builder --driver docker-container --use
+docker buildx inspect --bootstrap
+
+VERSION="$(python3 -c 'import json; print(json.load(open("wails.json"))["info"]["productVersion"])')"
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t "derorange/protocol-simulator:$VERSION" \
+  -t derorange/protocol-simulator:latest --push .
+
+docker buildx imagetools inspect "derorange/protocol-simulator:$VERSION"
+```
+
+`--push` 会直接上传两种架构及 manifest；`imagetools inspect` 应显示 `linux/amd64`、`linux/arm64`。服务器拉取时自动选择匹配架构。正式部署建议固定版本标签；镜像构建、上传和远端检查是不同步骤，仓库创建完成不代表镜像已经发布。
+
+### 挂载配置并运行
+
+以下在部署服务器的新工作目录执行，需要 Docker 和 Python 3。将 `1.0.1` 换成要部署的版本；也可以使用本地构建的 `protocol-simulator:local`，跳过拉取。
+
+```bash
+IMAGE=derorange/protocol-simulator:1.0.1
+docker pull "$IMAGE"
+mkdir -p config
+
+# 从镜像取出示例；已有工程时直接将自己的 JSON 放入 config/project.json
+docker create --name prs-config-example "$IMAGE"
+docker cp prs-config-example:/examples/server-iec104.json ./config/project.json
+docker rm prs-config-example
+
+# 示例原来只监听回环地址；端口映射要求容器内监听 0.0.0.0
+python3 - <<'PY'
+import json
+from pathlib import Path
+path = Path('config/project.json')
+project = json.loads(path.read_text())
+project['channels'][0]['address'] = '0.0.0.0:24040'
+path.write_text(json.dumps(project, ensure_ascii=False, indent=2) + '\n')
+PY
+chmod 755 config
+chmod 644 config/project.json
+
+docker run -d --name prs --restart unless-stopped \
+  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+  --mount "type=bind,src=$PWD/config,dst=/config,readonly" \
+  -p 24040:24040 \
+  "$IMAGE" run /config/project.json --start-data-rules --log-format json
+```
+
+主站连接宿主机 IP 的 `24040` 端口。工程的监听端口与 `-p 宿主机端口:容器端口` 中的容器端口应一致；Modbus TCP、UDP 需按工程增加映射，UDP 使用 `-p 端口:端口/udp`。RTU 则用 `--device /dev/ttyUSB0:/dev/ttyUSB0`，并按设备属组增加 `--group-add` 权限。
+
+自动规则只有显式加上 `--start-data-rules` 才启动；不需要自动上报时去掉它。修改宿主机 `config/project.json` 后默认自动热加载，无需重建镜像。始终挂载整个目录，编辑器原子替换保存也能生效；修改一个容器的配置不影响其他容器。多工程分别使用独立配置目录、容器名和宿主机端口。
+
+```bash
+docker logs --tail 100 -f prs
+docker exec -it prs prs tui
+docker exec prs prs validate /config/project.json --json
+docker stop --time 10 prs
+docker start prs
+```
+
+`prs tui` 退出只关闭界面，容器内工程继续运行。运行日志输出到 Docker；`docker stop` 发送 SIGTERM，让程序正常停止。若启用 `--frames`，额外挂载可由 UID 65532 写入的日志目录并指定容器内路径。
+
+### 无外网服务器：离线导入
+
+在支持 `docker save --platform` 的联网 Docker 上导出对应架构；以下为 amd64，ARM 服务器改为 `linux/arm64`：
+
+```bash
+docker pull --platform linux/amd64 derorange/protocol-simulator:1.0.1
+docker image save --platform linux/amd64 \
+  -o protocol-simulator-image.tar derorange/protocol-simulator:1.0.1
+gzip protocol-simulator-image.tar
+shasum -a 256 protocol-simulator-image.tar.gz
+```
+
+将压缩包通过内网或文件传输工具复制到离线服务器，核对 SHA256 与导出端一致，再执行：
+
+```bash
+sha256sum protocol-simulator-image.tar.gz
+docker load -i protocol-simulator-image.tar.gz
+docker run --rm derorange/protocol-simulator:1.0.1 version
+```
+
+然后按前面的挂载配置步骤运行，跳过 `docker pull`。离线导入不需要 Docker Hub 登录，也不修改 Docker 服务的网络或镜像源配置。
 
 ## 日志
 
@@ -536,7 +759,205 @@ prs run project.json --log-format json \
 
 ## systemd 托管
 
-### 首次安装
+用户服务与系统服务是两种安装方式，选择其中一种即可，不要让它们使用同一监听端口。以下以工程实例 `demo` 为例；名称对应 `demo.json`、`demo.env` 和 `protocol-simulator@demo.service`。
+
+### 当前用户安装与用户服务
+
+适用于 Ubuntu 24.04 等使用 systemd 的 Linux。以将来运行工程的普通用户通过 SSH 登录，不要在 `sudo su` 会话内执行 `systemctl --user`。程序、配置和服务安装不需要 root；无人登录时开机启动需要启用 linger，是否允许普通用户启用由系统策略决定。
+
+#### 1. 解压、安装程序和配置
+
+将对应架构的服务器压缩包上传到服务器，在压缩包所在目录完整执行下面代码。用于首次安装：若已有程序或 `prs` 命令链接，停止并检查已有安装，升级参见后文；不会覆盖已有工程 JSON。
+
+```bash
+(
+set -eu
+case "$(uname -m)" in
+  x86_64) prs_arch=amd64 ;;
+  aarch64|arm64) prs_arch=arm64 ;;
+  *) echo "不支持的 CPU 架构" >&2; exit 1 ;;
+esac
+
+test ! -e "$HOME/.local/share/protocol-simulator/bin/prs"
+test ! -e "$HOME/.local/bin/prs"
+test ! -L "$HOME/.local/bin/prs"
+tar -xzf "protocol-simulator-server-linux-${prs_arch}.tar.gz"
+cd protocol-simulator-server
+install -d -m 0755 "$HOME/.local/bin" "$HOME/.local/share/protocol-simulator/bin"
+install -d -m 0700 "$HOME/.config/protocol-simulator" "$HOME/.local/state/protocol-simulator"
+install -m 0755 bin/prs "$HOME/.local/share/protocol-simulator/bin/prs"
+ln -s "$HOME/.local/share/protocol-simulator/bin/prs" "$HOME/.local/bin/prs"
+if [ ! -e "$HOME/.config/protocol-simulator/demo.json" ]; then
+  install -m 0600 examples/server-iec104.json "$HOME/.config/protocol-simulator/demo.json"
+fi
+"$HOME/.local/bin/prs" version
+"$HOME/.local/bin/prs" validate "$HOME/.config/protocol-simulator/demo.json" --json
+)
+```
+
+默认创建可运行的 IEC104 示例，监听 `127.0.0.1:24040`。需要迁移真实工程时，在启动服务前用自己的 JSON 替换 `~/.config/protocol-simulator/demo.json`，并再次校验。远程设备接入时将工程的监听地址改为服务器明确的网卡地址，放行对应 TCP 端口；主站填写同一个服务器 IP。点位与自动规则来自 JSON，不会从旧服务器自动同步。
+
+下面设置当前终端的命令路径；后续代码即使没有设置 PATH，也会通过绝对路径运行：
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+若新登录后 `command -v prs` 没有结果，将上面一行加入当前 shell 的启动文件（Bash 通常是 `~/.profile`，Zsh 是 `~/.zprofile`），然后重新登录。
+
+#### 2. 创建 systemd 用户服务
+
+以下生成用户专用模板。包内 `systemd/protocol-simulator@.service` 是系统级模板，不能直接复制作为用户服务。已有同名用户模板时先核对，避免覆盖自定义参数。
+
+```bash
+(
+set -eu
+install -d -m 0700 "$HOME/.config/systemd/user"
+test ! -e "$HOME/.config/systemd/user/protocol-simulator@.service"
+cat > "$HOME/.config/systemd/user/protocol-simulator@.service" <<'EOF'
+[Unit]
+Description=Protocol Simulator (%i)
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=exec
+Environment=CHANNELS=all
+Environment=START_DATA_RULES=false
+Environment=WATCH=true
+EnvironmentFile=-%h/.config/protocol-simulator/%i.env
+RuntimeDirectory=protocol-simulator
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+ExecStart="%h/.local/share/protocol-simulator/bin/prs" run "%h/.config/protocol-simulator/%i.json" --channels ${CHANNELS} --start-data-rules=${START_DATA_RULES} --watch=${WATCH} --runtime-dir %t/protocol-simulator --log-format json --frames "%h/.local/state/protocol-simulator/%i.frames.jsonl" --frames-max-mb 10 --frames-files 3
+Restart=on-failure
+RestartPreventExitStatus=2
+RestartSec=3
+TimeoutStopSec=15
+NoNewPrivileges=true
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+EOF
+chmod 0600 "$HOME/.config/systemd/user/protocol-simulator@.service"
+systemd-analyze --user verify "$HOME/.config/systemd/user/protocol-simulator@.service"
+systemctl --user daemon-reload
+)
+```
+
+模板中的 `%h`、`%t`、`%i` 由 systemd 展开；`${CHANNELS}` 等变量由服务环境展开，不需要手工替换。各工程的报文日志最多保留 3 个、每个 10 MiB；运行日志进入用户 journal。共享 socket 目录为 `$XDG_RUNTIME_DIR/protocol-simulator`，仅当前用户可访问，停止一个实例不影响其他实例。
+
+#### 3. 启动工程、查看状态与界面
+
+下面显式开启 JSON 中已保存、已启用的自动数据/上报规则；不希望启动这些规则时，将 `START_DATA_RULES=true` 改为 `false`。不会启动自动遥控、自动遥调任务。已有 `.env` 时保留其内容，请自行编辑。
+
+```bash
+(
+set -eu
+if [ ! -e "$HOME/.config/protocol-simulator/demo.env" ]; then
+  (umask 077; cat > "$HOME/.config/protocol-simulator/demo.env" <<'EOF'
+CHANNELS=all
+START_DATA_RULES=true
+WATCH=true
+EOF
+  )
+fi
+"$HOME/.local/bin/prs" validate "$HOME/.config/protocol-simulator/demo.json" --json
+systemctl --user enable --now protocol-simulator@demo.service
+systemctl --user is-enabled protocol-simulator@demo.service
+systemctl --user is-active protocol-simulator@demo.service
+systemctl --user status protocol-simulator@demo.service --no-pager
+)
+```
+
+在同一用户的 SSH 会话执行，不需要 `sudo`：
+
+```bash
+"$HOME/.local/bin/prs" tui
+journalctl --user -u protocol-simulator@demo.service -n 100 --no-pager
+journalctl --user -u protocol-simulator@demo.service -f
+```
+
+以上三条分别执行；`tui` 用 `q` 退出，日志跟随用 Ctrl+C 结束，都不会停止工程。JSON 热加载默认开启；修改 `.env` 后需要 `systemctl --user restart protocol-simulator@demo.service`。
+
+#### 4. 退出 SSH 后继续运行、无人登录时开机自启
+
+`enable --now` 负责启用服务，还需要 linger 才能在无人登录时随开机启动，并在退出 SSH 后保留用户管理器（[systemd 官方说明](https://www.freedesktop.org/software/systemd/man/latest/loginctl.html#enable-linger%20%5BUSER%E2%80%A6%5D)）。先以当前普通用户执行：
+
+```bash
+loginctl enable-linger "$(id -un)"
+loginctl show-user "$(id -un)" -p Linger --value
+systemctl --user is-enabled protocol-simulator@demo.service
+systemctl --user is-active protocol-simulator@demo.service
+```
+
+期望依次看到 `yes`、`enabled`、`active`。若第一条被系统策略拒绝，需要管理员执行下面这一条；其中用户名由当前普通用户的 shell 展开，不要切换到 root 后再取用户名：
+
+```bash
+sudo loginctl enable-linger "$(id -un)"
+```
+
+没有 sudo 权限时，由管理员为你的账号启用 linger；无法启用时，不能保证退出登录后持续运行或无人登录开机启动。不要把 `nohup`、`&` 或仅 `enable` 当作完整替代。启用后可退出 SSH 再登录核对状态；服务器下次正常重启后，用下面两条核对启动结果，无需为安装主动重启整台服务器：
+
+```bash
+systemctl --user is-active protocol-simulator@demo.service
+journalctl --user -u protocol-simulator@demo.service -b -n 100 --no-pager
+```
+
+若 `systemctl --user` 提示无法连接总线，重新用目标用户直接 SSH 登录，并检查 `echo "$XDG_RUNTIME_DIR"` 与 `loginctl user-status "$(id -un)"`；不要给其他用户的 runtime 目录改权限，也不要用 `sudo systemctl --user`。精简安装的 Ubuntu / Debian 若缺少用户会话组件，由管理员执行 `sudo apt install libpam-systemd dbus-user-session` 后重新登录。
+
+#### 5. 多工程、升级与卸载
+
+第二个工程使用独立文件和实例，监听端口或串口必须与其他实例不同：
+
+```bash
+"$HOME/.local/bin/prs" validate "$HOME/.config/protocol-simulator/site-b.json" --json
+systemctl --user enable --now protocol-simulator@site-b.service
+```
+
+请先准备 `site-b.json`，需要自动规则时另建 `site-b.env`；不要直接复制示例后使用相同监听端口。每个实例单独启停：
+
+```bash
+systemctl --user stop protocol-simulator@demo.service
+systemctl --user start protocol-simulator@demo.service
+systemctl --user restart protocol-simulator@demo.service
+systemctl --user disable --now protocol-simulator@demo.service
+```
+
+升级时先解压新包并进入其 `protocol-simulator-server/` 目录。共享程序的所有运行实例都需要停下再替换；以下仅展示一个实例，有其他实例时逐一停止并在替换后逐一启动：
+
+```bash
+(
+set -eu
+systemctl --user stop protocol-simulator@demo.service
+install -m 0755 bin/prs "$HOME/.local/share/protocol-simulator/bin/prs.new"
+mv -f "$HOME/.local/share/protocol-simulator/bin/prs.new" "$HOME/.local/share/protocol-simulator/bin/prs"
+"$HOME/.local/bin/prs" version
+"$HOME/.local/bin/prs" validate "$HOME/.config/protocol-simulator/demo.json" --json
+systemctl --user start protocol-simulator@demo.service
+systemctl --user is-active protocol-simulator@demo.service
+)
+```
+
+升级不覆盖 JSON、`.env` 和日志。卸载时先对所有实例执行 `disable --now`；仅在没有其他实例使用时执行下面的程序文件清理，配置和日志继续保留：
+
+```bash
+rm "$HOME/.config/systemd/user/protocol-simulator@.service"
+systemctl --user daemon-reload
+if [ -L "$HOME/.local/bin/prs" ] && [ "$(readlink "$HOME/.local/bin/prs")" = "$HOME/.local/share/protocol-simulator/bin/prs" ]; then
+  rm "$HOME/.local/bin/prs"
+fi
+rm "$HOME/.local/share/protocol-simulator/bin/prs"
+```
+
+不要自动关闭 linger，它可能也供该用户的其他服务使用。
+
+### 系统级安装与服务
+
+#### 首次安装
 
 在服务器包的解压目录执行。`project.json` 是已准备好的工程文件，例如从 `examples/server-iec104.json` 复制并修改。安装步骤本身不会启动通信。
 
@@ -552,7 +973,7 @@ sudo systemctl daemon-reload
 
 `prs` 命令链接为可选项；若同名路径已存在，`ln` 会拒绝覆盖。服务使用 `/opt/protocol-simulator/bin/prs` 绝对路径。已有专用用户时跳过 `useradd`，不要修改其他账户。
 
-### 每个工程的配置
+#### 每个工程的配置
 
 实例 `protocol-simulator@demo` 对应 `/etc/protocol-simulator/demo.json`。可选的环境文件为 `/etc/protocol-simulator/demo.env`：
 
@@ -570,7 +991,7 @@ WATCH=true
 
 示例环境文件显式开启了数据规则。由管理员保存为 root 所有、`protocol-simulator` 组可读的文件，例如 `0640`。修改 `.env` 后重启该实例；修改 JSON 不需要重启。
 
-### 启停、状态与日志
+#### 启停、状态与日志
 
 ```bash
 sudo systemctl start protocol-simulator@demo
@@ -593,4 +1014,4 @@ sudo journalctl -u protocol-simulator@demo -n 100 --no-pager
 
 支持标准 IEC104、Modbus TCP/RTU、RAW TCP、UDP 和串口。厂商私有 SOE、虚遥信、五防闭锁等扩展不在完整兼容范围内。服务器通过所属用户专用的 Unix socket 提供观测和明确的数据点操作，不提供 TCP 远程管理 API；点表与规则配置仍通过工程文件或桌面版管理。
 
-源码使用 Go + Wails 和原生 HTML/CSS/JavaScript。构建、测试及平台验证边界见 [CONTRIBUTING.md](https://github.com/Masterora/protocol-simulator/blob/main/CONTRIBUTING.md)。Linux 桌面验收覆盖 X11，Wayland 需另行验证；串口 PTY 验证不代替物理 RS-485。Windows 交叉构建和包校验不代表 Windows 实机安装验收。
+源码使用 Go + Wails 和原生 HTML/CSS/JavaScript。修改界面时运行 `npm run dev`，主窗口和配置窗口自动刷新；CSS 保留当前输入，HTML/JS 刷新会重新初始化界面，Go 修改会自动重启开发进程。构建、测试及平台验证边界见 [CONTRIBUTING.md](https://github.com/Masterora/protocol-simulator/blob/main/CONTRIBUTING.md)。Linux 桌面验收覆盖 X11，Wayland 需另行验证；串口 PTY 验证不代替物理 RS-485。Windows 交叉构建和包校验不代表 Windows 实机安装验收。

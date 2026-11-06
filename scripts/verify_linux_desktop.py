@@ -15,6 +15,8 @@ import sys
 import tempfile
 import time
 
+from delivery import NATIVE_SCENARIOS
+
 
 def x11():
     lib = C.CDLL('libX11.so.6')
@@ -88,7 +90,7 @@ def session(directory, smoke):
     text = native.stdout + native.stderr
     (directory / 'native-windows.txt').write_text(text)
     assert native.returncode == 0, text[-12000:]
-    assert text.count('native process and frontend bridge ready') == 25
+    assert text.count('native process and frontend bridge ready') == NATIVE_SCENARIOS
     assert 'verified_binary_sha256=' + hashlib.sha256(binary.read_bytes()).hexdigest() in text
     processes = []
     try:
@@ -149,7 +151,7 @@ def session(directory, smoke):
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
-    (directory / 'session.json').write_text(json.dumps({'passed': True, 'nativeWindowScenarios': 25, 'independentMainWindowsVerified': True, 'windowClassVerified': True, 'nativeProjectSaveVerified': True, 'displayBackend': 'X11/Xvfb'}))
+    (directory / 'session.json').write_text(json.dumps({'passed': True, 'nativeWindowScenarios': NATIVE_SCENARIOS, 'independentMainWindowsVerified': True, 'windowClassVerified': True, 'nativeProjectSaveVerified': True, 'displayBackend': 'X11/Xvfb'}))
 
 
 def main():
@@ -203,7 +205,7 @@ def main():
         if system_ps_hash:
             assert hashlib.sha256(system_ps.read_bytes()).hexdigest() == system_ps_hash
         report = {'passed': True, 'packageSHA256': hashlib.sha256(args.package.read_bytes()).hexdigest(),
-                  'binarySHA256': info['binarySHA256'], 'architecture': info['architecture'], 'nativeWindowScenarios': 25,
+                  'binarySHA256': info['binarySHA256'], 'architecture': info['architecture'], 'nativeWindowScenarios': NATIVE_SCENARIOS,
                   'installationVerified': True, 'nativeProjectSaveVerified': True, 'uninstallPreservesProjects': True, 'systemPsPreserved': True,
                   'displayBackend': 'X11/Xvfb', 'waylandVerified': False}
         (args.output / 'runtime.json').write_text(json.dumps(report, indent=2))

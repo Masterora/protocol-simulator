@@ -35,6 +35,7 @@ type AutoDataSnapshot struct {
 	Device     string         `json:"device"`
 	Status     string         `json:"status"`
 	Config     AutoDataConfig `json:"config"`
+	RuleStates []string       `json:"ruleStates,omitempty"`
 	Cycles     []uint64       `json:"cycles"`
 	Updates    uint64         `json:"updates"`
 	LastError  string         `json:"lastError"`
@@ -186,6 +187,7 @@ func (e *Engine) dataSnapshotLocked(channel, device string, d *Device, category 
 		v = j.view
 		v.Config = *cloneAutoData(&v.Config)
 		v.Cycles = append([]uint64{}, v.Cycles...)
+		v.RuleStates = append([]string{}, v.RuleStates...)
 	}
 	v.Generation = e.dataGeneration
 	return v
@@ -273,6 +275,11 @@ func (e *Engine) StartAutoData(channel, device string) (AutoDataSnapshot, error)
 func (e *Engine) startAutoData(channel, device, category string) (AutoDataSnapshot, error) {
 	e.op.Lock()
 	defer e.op.Unlock()
+	return e.startAutoDataLocked(channel, device, category, nil)
+}
+
+// Caller holds e.op. A selected start leaves all other rules stopped.
+func (e *Engine) startAutoDataLocked(channel, device, category string, selected *int) (AutoDataSnapshot, error) {
 	e.mu.Lock()
 	c, d, err := e.dataTargetLocked(channel, device)
 	if err != nil {
@@ -295,12 +302,18 @@ func (e *Engine) startAutoData(channel, device, category string) (AutoDataSnapsh
 		e.mu.Unlock()
 		return AutoDataSnapshot{}, errors.New("请先配置自动数据规则")
 	}
-	if err = validateDataTest(c.Protocol, c.Role, category, config, deviceValidationPoints(c.Protocol, *d, d.Points)...); err != nil {
+	validation := cloneAutoData(config)
+	if selected != nil {
+		for i := range validation.Rules {
+			validation.Rules[i].Enabled = i == *selected
+		}
+	}
+	if err = validateDataTest(c.Protocol, c.Role, category, validation, deviceValidationPoints(c.Protocol, *d, d.Points)...); err != nil {
 		e.mu.Unlock()
 		return AutoDataSnapshot{}, err
 	}
 	count := 0
-	for i, r := range config.Rules {
+	for i, r := range validation.Rules {
 		selected, _ := selectionSpans(r.Points, r.Start, r.End, 0xffffff)
 		if !r.Enabled {
 			continue
@@ -334,10 +347,24 @@ func (e *Engine) startAutoData(channel, device, category string) (AutoDataSnapsh
 	ctx, cancel := context.WithCancel(context.Background())
 	pending, cancelPending := context.WithCancel(ctx)
 	j := &autoDataJob{view: AutoDataSnapshot{Category: category, Channel: channel, Device: device, Status: "running", Config: *config, Cycles: make([]uint64, len(config.Rules))}, ctx: ctx, cancel: cancel, pending: pending, cancelPending: cancelPending, next: make([]time.Time, len(config.Rules))}
+	j.view.RuleStates = make([]string, len(config.Rules))
 	for i, r := range config.Rules {
 		j.next[i] = time.Now().Add(time.Duration(r.IntervalMS) * time.Millisecond)
+		j.view.RuleStates[i] = "stopped"
+		if !r.Enabled {
+			j.view.RuleStates[i] = "disabled"
+		}
+		if validation.Rules[i].Enabled {
+			j.view.RuleStates[i] = "running"
+		}
 	}
 	e.mu.Lock()
+	if selected != nil {
+		if old := e.dataJobs[key]; old != nil && reflect.DeepEqual(old.view.Config, *config) {
+			j.view.Cycles = append([]uint64{}, old.view.Cycles...)
+			j.view.Updates = old.view.Updates
+		}
+	}
 	if e.dataJobs == nil {
 		e.dataJobs = map[string]*autoDataJob{}
 	}
@@ -370,6 +397,11 @@ func (e *Engine) setAutoDataState(channel, device, category, action string) (Aut
 		}
 		j.cancelPending()
 		j.view.Status = "paused"
+		for i, state := range j.view.RuleStates {
+			if state == "running" {
+				j.view.RuleStates[i] = "paused"
+			}
+		}
 	case "resume":
 		if j.view.Status != "paused" {
 			return AutoDataSnapshot{}, errors.New("任务未暂停")
@@ -377,6 +409,10 @@ func (e *Engine) setAutoDataState(channel, device, category, action string) (Aut
 		j.pending, j.cancelPending = context.WithCancel(j.ctx)
 		j.view.Status = "running"
 		for i, r := range j.view.Config.Rules {
+			if j.view.RuleStates[i] != "paused" {
+				continue
+			}
+			j.view.RuleStates[i] = "running"
 			j.next[i] = time.Now().Add(time.Duration(r.IntervalMS) * time.Millisecond)
 		}
 	case "stop":
@@ -390,6 +426,11 @@ func (e *Engine) finishDataLocked(j *autoDataJob, message string) {
 	j.cancelPending()
 	j.cancel()
 	j.view.Status = "stopped"
+	for i, state := range j.view.RuleStates {
+		if state == "running" || state == "paused" {
+			j.view.RuleStates[i] = "stopped"
+		}
+	}
 	j.view.LastError = message
 	if message != "" {
 		e.logLocked(j.view.Channel, "", "ERR", nil, message)
@@ -504,7 +545,7 @@ func (e *Engine) stepAutoData(j *autoDataJob, now time.Time) {
 	actualDevice := d
 	working := *d
 	for i, rule := range j.view.Config.Rules {
-		if rule.Enabled && rule.Mode != "report" && !now.Before(j.next[i]) {
+		if RuleRuntimeStatus(&j.view, i) == "running" && rule.Mode != "report" && !now.Before(j.next[i]) {
 			working.Points = append([]Point{}, d.Points...)
 			break
 		}
@@ -520,7 +561,7 @@ func (e *Engine) stepAutoData(j *autoDataJob, now time.Time) {
 	updates := []dataReport{}
 	changed := false
 	for i, r := range j.view.Config.Rules {
-		if !r.Enabled || now.Before(j.next[i]) {
+		if RuleRuntimeStatus(&j.view, i) != "running" || now.Before(j.next[i]) {
 			continue
 		}
 		if r.Mode != "report" && hasRelations && previousPoints == nil {

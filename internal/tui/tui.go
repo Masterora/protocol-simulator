@@ -3,6 +3,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"golang.org/x/term"
 	"gytest-go/internal/core"
 	"gytest-go/internal/observe"
+	"gytest-go/internal/projectfile"
 )
 
 var viewNames = []string{"Projects", "Channels", "Devices", "Points", "Rules", "Frames", "Logs"}
@@ -51,30 +53,36 @@ type detailTarget struct {
 	ruleDuplicate               bool
 }
 type model struct {
-	editor                             *pointEditor
-	pendingOperation                   *manualOperation
-	operationBusy                      bool
-	operationNotice                    string
-	operationNoticeAt                  time.Time
-	detailOpen                         bool
-	detailTarget                       detailTarget
-	detailScroll                       int
-	detailTitle                        string
-	detailLines                        []string
-	discovered                         bool
-	updatedAt                          time.Time
-	follow                             bool
-	connected                          bool
-	view, cursor, pointOffset          int
-	socket, channel, device            string
-	pointKind                          string
-	instances                          []instance
-	detail                             observe.Info
-	messages                           []core.Message
-	logs                               []observe.Log
-	after, logAfter, missed, logMissed uint64
-	filter, input, mode, notice        string
-	paused, help                       bool
+	pendingRule                 *ruleOperation
+	deleting                    *deleteConfirmation
+	picker                      *choicePicker
+	pickerLabels                []string
+	runtimeDir                  string
+	configurationEditor         *configurationEditor
+	pendingConfiguration        *configurationOperation
+	editor                      *pointEditor
+	pendingOperation            *manualOperation
+	operationBusy               bool
+	operationNotice             string
+	operationNoticeAt           time.Time
+	detailOpen                  bool
+	detailTarget                detailTarget
+	detailScroll                int
+	detailTitle                 string
+	detailLines                 []string
+	discovered                  bool
+	follow                      bool
+	connected                   bool
+	view, cursor, pointOffset   int
+	socket, channel, device     string
+	pointKind                   string
+	instances                   []instance
+	detail                      observe.Info
+	messages                    []core.Message
+	logs                        []observe.Log
+	after, logAfter             uint64
+	filter, input, mode, notice string
+	help                        bool
 }
 
 func sanitize(text string) string {
@@ -101,6 +109,30 @@ func fit(text string, width int) string {
 	return out.String() + strings.Repeat(" ", max(0, width-used))
 }
 
+func clipped(text string, width int, tail bool) string {
+	text = sanitize(text)
+	if width <= 0 {
+		return ""
+	}
+	if uniseg.StringWidth(text) <= width {
+		return text
+	}
+	if !tail {
+		return strings.TrimRight(fit(text, width-1), " ") + "…"
+	}
+	parts := []string{}
+	graphemes := uniseg.NewGraphemes(text)
+	for graphemes.Next() {
+		parts = append(parts, graphemes.Str())
+	}
+	used, start := 0, len(parts)
+	for start > 0 && used+uniseg.StringWidth(parts[start-1]) <= width-1 {
+		start--
+		used += uniseg.StringWidth(parts[start])
+	}
+	return "…" + strings.Join(parts[start:], "")
+}
+
 // bindProject changes only the viewer's scope; it never touches a running engine.
 func (m *model) bindProject(item instance) {
 	if m.socket == item.socket {
@@ -110,7 +142,7 @@ func (m *model) bindProject(item instance) {
 	m.detail = item.info
 	m.connected = false
 	m.messages, m.logs = nil, nil
-	m.after, m.logAfter, m.missed, m.logMissed = 0, 0, 0, 0
+	m.after, m.logAfter = 0, 0
 	m.pointOffset = 0
 	m.pointKind = ""
 	if len(item.info.View.Channels) > 0 {
@@ -136,6 +168,7 @@ func (m *model) selectView(view int) {
 				m.device = ""
 				m.detail.View.Devices = nil
 				m.detail.View.Points = nil
+				m.detail.View.PointBindings = nil
 				m.detail.View.Rules = nil
 				m.pointKind = ""
 				m.detail.View.PointKinds = nil
@@ -145,6 +178,7 @@ func (m *model) selectView(view int) {
 				m.device = id
 				m.connected = false
 				m.detail.View.Points = nil
+				m.detail.View.PointBindings = nil
 				m.detail.View.Rules = nil
 				m.pointKind = ""
 				m.detail.View.PointKinds = nil
@@ -183,12 +217,49 @@ func (m *model) key(key string) bool {
 	if m.operationBusy {
 		return false
 	}
+	if m.deleting != nil {
+		m.deletionKey(key)
+		return false
+	}
+	if m.picker != nil {
+		m.pickerKey(strings.ToLower(key))
+		return false
+	}
+	if m.configurationEditor != nil {
+		m.configurationKey(key)
+		return false
+	}
 	if m.editor != nil {
 		m.editKey(key)
 		return false
 	}
-	if m.mode == "" && !m.help && m.view == 3 {
+	if m.mode == "" {
+		key = strings.ToLower(key)
+	}
+	if m.mode == "" && !m.help && !m.detailOpen {
+		if key == "n" {
+			m.beginConfiguration("add")
+			return false
+		}
 		if key == "e" {
+			m.beginConfiguration("edit")
+			return false
+		}
+		if key == "x" || key == "delete" {
+			m.beginDelete()
+			return false
+		}
+		if key == "r" && m.view == 4 {
+			m.beginRuleControl()
+			return false
+		}
+		if key == "c" && m.view == 1 {
+			m.toggleChannel()
+			return false
+		}
+	}
+	if m.mode == "" && !m.help && m.view == 3 {
+		if key == "v" {
 			m.beginPointEdit()
 			return false
 		}
@@ -209,11 +280,9 @@ func (m *model) key(key string) bool {
 			m.detailScroll += 10
 		case "pageup":
 			m.detailScroll = max(0, m.detailScroll-10)
-		case "p", " ":
-			m.paused = !m.paused
-		case "g":
+		case "home":
 			m.detailScroll = 0
-		case "G":
+		case "end":
 			m.detailScroll = len(m.detailLines)
 		case "q":
 			return true
@@ -222,7 +291,7 @@ func (m *model) key(key string) bool {
 	}
 	if m.help {
 		switch key {
-		case "esc", "?", "ctrl-a":
+		case "esc", "?", "f1":
 			m.help = false
 		case "down":
 			m.detailScroll++
@@ -232,8 +301,10 @@ func (m *model) key(key string) bool {
 			m.detailScroll += 10
 		case "pageup":
 			m.detailScroll = max(0, m.detailScroll-10)
-		case "g":
+		case "home":
 			m.detailScroll = 0
+		case "end":
+			m.detailScroll = 1 << 20
 		case "q":
 			return true
 		}
@@ -276,7 +347,8 @@ func (m *model) key(key string) bool {
 		case "ctrl-u":
 			m.input = ""
 		default:
-			if len(m.input)+len(key) <= 256 && utf8.ValidString(key) && key != "up" && key != "down" && key != "left" && key != "right" && key != "tab" && key != "pageup" && key != "pagedown" {
+			r, _ := utf8.DecodeRuneInString(key)
+			if len(m.input)+len(key) <= 256 && utf8.RuneCountInString(key) == 1 && !unicode.IsControl(r) {
 				m.input += key
 			}
 		}
@@ -285,34 +357,36 @@ func (m *model) key(key string) bool {
 	switch key {
 	case "q":
 		return true
-	case "?", "ctrl-a":
+	case "?", "f1":
 		m.help = !m.help
 		m.detailScroll = 0
 	case "/", ":":
 		m.mode = key
 		m.input = ""
-	case "p", " ":
-		m.paused = !m.paused
 	case "down":
 		m.follow = false
 		m.cursor++
 	case "up":
 		m.follow = false
 		m.cursor = max(0, m.cursor-1)
-	case "g":
+	case "home":
 		m.follow = false
 		m.cursor = 0
-	case "G":
+	case "end", "g":
 		m.follow = m.view == 5 || m.view == 6
 		m.cursor = max(0, len(m.rows())-1)
-	case "v":
-		m.openDetail()
+	case "i":
+		if m.view < 3 {
+			m.openDetail()
+		}
 	case "f":
 		m.selectView(5)
 	case "l":
 		m.selectView(6)
 	case "enter":
 		m.enter()
+	case "shift-tab":
+		m.selectView((m.view + len(viewNames) - 1) % len(viewNames))
 	case "tab":
 		m.selectView((m.view + 1) % len(viewNames))
 	case "esc":
@@ -330,11 +404,11 @@ func (m *model) key(key string) bool {
 				m.selectView(2)
 			}
 		}
-	case "left", "h":
+	case "left":
 		m.switchPointKind(-1)
-	case "right", "L":
+	case "right":
 		m.switchPointKind(1)
-	case "pageup", "[":
+	case "pageup":
 		m.follow = false
 		if m.view == 3 {
 			m.pointOffset = max(0, m.pointOffset-100)
@@ -342,7 +416,7 @@ func (m *model) key(key string) bool {
 		} else {
 			m.cursor = max(0, m.cursor-15)
 		}
-	case "pagedown", "]":
+	case "pagedown":
 		m.follow = false
 		if m.view == 3 {
 			if m.pointOffset+100 < m.detail.View.PointMatches {
@@ -441,17 +515,60 @@ func fetch(ctx context.Context, req request) update {
 
 	return result
 }
+
+// Older running engines omit transport metadata. Read their bounded channel
+// configuration once per revision, without restarting communication or guessing
+// TCP direction from the independent station role.
+type channelMetadataCache struct {
+	socket, revision string
+	started          time.Time
+	channels         map[string]core.Channel
+}
+
+func (cache *channelMetadataCache) enrich(ctx context.Context, u *update) {
+	if u.err != nil || u.socket == "" {
+		return
+	}
+	info := &u.detail
+	if cache.socket != u.socket || cache.revision != info.ConfigurationRevision || !cache.started.Equal(info.Started) {
+		*cache = channelMetadataCache{socket: u.socket, revision: info.ConfigurationRevision, started: info.Started, channels: make(map[string]core.Channel)}
+	}
+	for i := range info.View.Channels {
+		c := &info.View.Channels[i]
+		if c.Transport != "" || !info.ConfigurationOperations {
+			continue
+		}
+		stored, ok := cache.channels[c.ID]
+		if !ok {
+			view, _, err := observe.Configure(ctx, u.socket, projectfile.Request{Resource: "channel", Action: "read", Channel: c.ID})
+			if err != nil || view.Revision != info.ConfigurationRevision {
+				continue
+			}
+			if json.Unmarshal(view.Value["transport"], &stored.Transport) != nil {
+				continue
+			}
+			_ = json.Unmarshal(view.Value["localAddress"], &stored.LocalAddress)
+			cache.channels[c.ID] = stored
+		}
+		c.Transport, c.LocalAddress = stored.Transport, stored.LocalAddress
+	}
+	for i := range u.instances {
+		if u.instances[i].socket == u.socket {
+			u.instances[i].info.View.Channels = info.View.Channels
+		}
+	}
+}
 func (m *model) apply(u update) {
 	oldID := ""
 	if rows := m.rows(); len(rows) > 0 {
 		oldID = rows[min(m.cursor, len(rows)-1)].id
 	}
 	m.discovered = true
-	m.instances = u.instances
 	// A slow response must not replace a newly chosen project, channel or filter.
 	if u.request.socket != m.socket || u.request.channel != m.channel || u.request.device != m.device || u.request.offset != m.pointOffset || u.request.kind != m.pointKind || (m.view == 3 && u.request.filter != m.filter) {
 		return
 	}
+	m.instances = u.instances
 	if u.err != nil {
 		m.connected = false
 		m.notice = "连接错误：" + connectionMessage(u.err)
@@ -473,7 +590,6 @@ func (m *model) apply(u update) {
 		}
 	}
 	m.connected = true
-	m.updatedAt = time.Now()
 	m.socket, m.channel, m.device = u.socket, u.channel, u.device
 	m.detail = u.detail
 	if u.kind != "" {
@@ -494,8 +610,6 @@ func (m *model) apply(u update) {
 		m.logs = m.logs[len(m.logs)-1000:]
 	}
 	m.after, m.logAfter = u.detail.View.Sequence, u.detail.LogSequence
-	m.missed += u.detail.View.Missed
-	m.logMissed += u.detail.LogMissed
 	rows := m.rows()
 	if m.follow {
 		m.cursor = max(0, len(rows)-1)
@@ -560,15 +674,36 @@ func Run(ctx context.Context, in, out *os.File, dir string) (result error) {
 			}
 		}
 	}()
+	ruleRequests := make(chan ruleOperation, 1)
+	ruleReplies := make(chan ruleReply, 1)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case op := <-ruleRequests:
+				result, err := observe.ControlRules(ctx, op.socket, op.request)
+				select {
+				case ruleReplies <- ruleReply{op, result, err}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
 	requests := make(chan request, 1)
 	updates := make(chan update, 1)
 	go func() {
+		var metadata channelMetadataCache
+		var bindingNames bindingNamesCache
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case req := <-requests:
 				value := fetch(ctx, req)
+				metadata.enrich(ctx, &value)
+				bindingNames.enrich(ctx, &value)
 				select {
 				case updates <- value:
 				case <-ctx.Done():
@@ -577,14 +712,31 @@ func Run(ctx context.Context, in, out *os.File, dir string) (result error) {
 			}
 		}
 	}()
-	m := model{}
+	configurationRequests := make(chan configurationOperation, 1)
+	configurationReplies := make(chan configurationResponse, 1)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case operation := <-configurationRequests:
+				reply := performConfiguration(ctx, operation)
+				select {
+				case configurationReplies <- reply:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	m := model{runtimeDir: dir}
 	tick := time.NewTicker(250 * time.Millisecond)
 	defer tick.Stop()
 	pending := false
 	var escape, utf string
 	var escapedAt time.Time
 	queue := func() {
-		if pending || m.paused {
+		if pending {
 			return
 		}
 		filter := ""
@@ -610,14 +762,18 @@ func Run(ctx context.Context, in, out *os.File, dir string) (result error) {
 		select {
 		case <-ctx.Done():
 			return nil
+		case reply := <-configurationReplies:
+			m.applyConfiguration(reply)
+			queue()
+		case reply := <-ruleReplies:
+			m.applyRule(reply)
+			queue()
 		case reply := <-operationReplies:
 			m.applyManual(reply)
 			queue()
 		case update := <-updates:
 			pending = false
-			if !m.paused {
-				m.apply(update)
-			}
+			m.apply(update)
 		case <-tick.C:
 			if escape != "" && time.Since(escapedAt) > 150*time.Millisecond {
 				escape = ""
@@ -630,14 +786,14 @@ func Run(ctx context.Context, in, out *os.File, dir string) (result error) {
 			}
 			key := ""
 			// Esc followed quickly by a normal key is two actions, not an
-			// unknown escape sequence. Preserve the second key (e.g. Esc+p).
+			// unknown escape sequence. Preserve the second key (e.g. Esc+r).
 			if escape == "\x1b" && b != '[' && b != 'O' {
 				m.key("esc")
 				escape = ""
 			}
 			if escape != "" {
 				escape += string(b)
-				codes := map[string]string{"\x1b[A": "up", "\x1b[B": "down", "\x1b[C": "right", "\x1b[D": "left", "\x1b[5~": "pageup", "\x1b[6~": "pagedown"}
+				codes := map[string]string{"\x1b[A": "up", "\x1b[B": "down", "\x1b[C": "right", "\x1b[D": "left", "\x1b[5~": "pageup", "\x1b[6~": "pagedown", "\x1b[3~": "delete", "\x1b[Z": "shift-tab", "\x1b[H": "home", "\x1b[F": "end", "\x1bOH": "home", "\x1bOF": "end", "\x1b[1~": "home", "\x1b[4~": "end", "\x1bOP": "f1", "\x1b[11~": "f1"}
 				if value, ok := codes[escape]; ok {
 					key = value
 					escape = ""
@@ -677,6 +833,14 @@ func Run(ctx context.Context, in, out *os.File, dir string) (result error) {
 			if key != "" {
 				if m.key(key) {
 					return nil
+				}
+				if m.pendingConfiguration != nil {
+					configurationRequests <- *m.pendingConfiguration
+					m.pendingConfiguration = nil
+				}
+				if m.pendingRule != nil {
+					ruleRequests <- *m.pendingRule
+					m.pendingRule = nil
 				}
 				if m.pendingOperation != nil {
 					operationRequests <- *m.pendingOperation

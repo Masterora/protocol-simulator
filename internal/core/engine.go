@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -15,28 +16,30 @@ import (
 )
 
 type Engine struct {
-	viewClock      uint64
-	viewMetadata   uint64
-	viewPoints     map[string]*pointRevision
-	messageEpoch   uint64
-	eventEpoch     uint64
-	events         []PointEvent
-	eventSequence  uint64
-	dataGeneration uint64
-	dataJobs       map[string]*autoDataJob
-	autoMu         sync.Mutex
-	autoJobs       map[string]*autoControlJob
-	autoDrafts     map[string]*autoControlJob
-	op             sync.Mutex
-	mu             sync.Mutex
-	project        Project
-	running        map[string]*session
-	states         map[string]ChannelState
-	messages       []Message
-	subscribers    map[*MessageSubscription]struct{}
-	sequence       uint64
-	path           string
-	dirty          bool
+	pointCommunications map[pointCommunicationKey]string
+	rawTasks            map[rawTaskKey]*rawTask
+	viewClock           uint64
+	viewMetadata        uint64
+	viewPoints          map[string]*pointRevision
+	messageEpoch        uint64
+	eventEpoch          uint64
+	events              []PointEvent
+	eventSequence       uint64
+	dataGeneration      uint64
+	dataJobs            map[string]*autoDataJob
+	autoMu              sync.Mutex
+	autoJobs            map[string]*autoControlJob
+	autoDrafts          map[string]*autoControlJob
+	op                  sync.Mutex
+	mu                  sync.Mutex
+	project             Project
+	running             map[string]*session
+	states              map[string]ChannelState
+	messages            []Message
+	subscribers         map[*MessageSubscription]struct{}
+	sequence            uint64
+	path                string
+	dirty               bool
 }
 
 func NewEngine() *Engine {
@@ -46,12 +49,19 @@ func newID() string { b := make([]byte, 8); _, _ = rand.Read(b); return hex.Enco
 func cloneProject(p Project) Project {
 	p.Channels = append([]Channel{}, p.Channels...)
 	for i := range p.Channels {
+		p.Channels[i].RawTools = cloneRawTools(p.Channels[i].RawTools)
 		p.Channels[i].TransportDraft = cloneTransportDraft(p.Channels[i].TransportDraft)
 		p.Channels[i].Points = append([]Point{}, p.Channels[i].Points...)
+		for j := range p.Channels[i].Points {
+			p.Channels[i].Points[j].CommunicationAt = ""
+		}
 		if p.Channels[i].Devices != nil {
 			p.Channels[i].Devices = append([]Device{}, p.Channels[i].Devices...)
 			for j := range p.Channels[i].Devices {
 				p.Channels[i].Devices[j].Points = append([]Point{}, p.Channels[i].Devices[j].Points...)
+				for k := range p.Channels[i].Devices[j].Points {
+					p.Channels[i].Devices[j].Points[k].CommunicationAt = ""
+				}
 				p.Channels[i].Devices[j].Configuration = cloneConfiguration(p.Channels[i].Devices[j].Configuration)
 				p.Channels[i].Devices[j].AutoData = cloneAutoData(p.Channels[i].Devices[j].AutoData)
 				p.Channels[i].Devices[j].DataTests = cloneDataTests(p.Channels[i].Devices[j].DataTests)
@@ -219,8 +229,13 @@ func (e *Engine) ReplaceProject(p Project, path string) error {
 	e.resetAutoControls()
 	e.cancelDataLocked("", "")
 	e.dataJobs = nil
+	for _, j := range e.rawTasks {
+		j.cancel()
+	}
+	e.rawTasks = nil
 	e.dataGeneration++
 	e.project = cloneProject(p)
+	e.pointCommunications = nil
 	e.markConfigurationLocked()
 	e.messageEpoch++
 	e.eventEpoch++
@@ -250,22 +265,25 @@ func ReadProject(path string) (Project, error) {
 	if info.Size() > maxProjectFileBytes {
 		return Project{}, fmt.Errorf("工程文件超过 %dMB", maxProjectFileBytes>>20)
 	}
-	reader := &io.LimitedReader{R: f, N: maxProjectFileBytes + 1}
+	return decodeProject(io.LimitReader(f, maxProjectFileBytes+1))
+}
+
+// ParseProject shares strict file validation with explicit server edits.
+func ParseProject(data []byte) (Project, error) {
+	if int64(len(data)) > maxProjectFileBytes {
+		return Project{}, fmt.Errorf("工程文件超过 %dMB", maxProjectFileBytes>>20)
+	}
+	return decodeProject(bytes.NewReader(data))
+}
+
+func decodeProject(reader io.Reader) (Project, error) {
 	decoder := json.NewDecoder(reader)
 	decoder.DisallowUnknownFields()
 	var p Project
-	if err = decoder.Decode(&p); err != nil {
-		if reader.N == 0 {
-			return Project{}, fmt.Errorf("工程文件超过 %dMB", maxProjectFileBytes>>20)
-		}
+	if err := decoder.Decode(&p); err != nil {
 		return Project{}, fmt.Errorf("工程解析失败：%w", err)
 	}
-	var trailing any
-	err = decoder.Decode(&trailing)
-	if reader.N == 0 {
-		return Project{}, fmt.Errorf("工程文件超过 %dMB", maxProjectFileBytes>>20)
-	}
-	if err != io.EOF {
+	if err := decoder.Decode(new(any)); err != io.EOF {
 		return Project{}, errors.New("工程文件包含多余内容")
 	}
 	if err := validateProject(&p); err != nil {
@@ -273,6 +291,17 @@ func ReadProject(path string) (Project, error) {
 	}
 	return p, nil
 }
+
+func NormalizeProject(p Project) (Project, error) {
+	p = cloneProject(p)
+	if err := validateProject(&p); err != nil {
+		return Project{}, err
+	}
+	return p, nil
+}
+
+const MaxProjectFileBytes = maxProjectFileBytes
+
 func (e *Engine) Load(path string) error {
 	p, err := ReadProject(path)
 	if err != nil {
@@ -388,6 +417,7 @@ func (e *Engine) stopLocked(id string) {
 	e.stopAutoControls(id)
 	e.mu.Lock()
 	e.cancelDataLocked(id, "")
+	e.cancelRawTasksLocked(id)
 	s := e.running[id]
 	delete(e.running, id)
 	v := e.states[id]
