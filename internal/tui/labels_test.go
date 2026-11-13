@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -10,33 +9,22 @@ import (
 
 func TestLocalizedDetailsPreserveIdentifiersUserNamesAndExactNumbers(t *testing.T) {
 	original := map[string]any{"id": "device-running", "name": "Custom running name", "status": "connected", "kind": "holding", "enabled": true, "sequence": uint64(9007199254740993)}
-	text := strings.Join(detailJSONLines(original), "\n")
-	var shown map[string]any
-	decoder := json.NewDecoder(strings.NewReader(text))
-	decoder.UseNumber()
-	if err := decoder.Decode(&shown); err != nil {
-		t.Fatal(err)
+	text := strings.Join(formatDetailLines(original), "\n")
+	for _, line := range []string{"状态：已连接", "类型：保持寄存器", "启用：是", "标识：device-running", "名称：Custom running name", "序号：9007199254740993"} {
+		if !strings.Contains(text, line) {
+			t.Fatal(text)
+		}
 	}
-	if shown["状态"] != "已连接" || shown["类型"] != "保持寄存器" || shown["启用"] != "是" {
-		t.Fatal(shown)
-	}
-	if shown["标识"] != original["id"] || shown["名称"] != original["name"] || shown["序号"].(json.Number).String() != "9007199254740993" {
-		t.Fatal(shown)
+	if !strings.HasPrefix(text, "名称：") || strings.ContainsAny(text, "{}") {
+		t.Fatal("expected a readable list of fields", text)
 	}
 	if original["status"] != "connected" || original["kind"] != "holding" {
 		t.Fatal("Display modified source data")
 	}
 }
-func TestChineseResourceCommandsAndLogDisplayKeepRawRecords(t *testing.T) {
-	m := model{}
-	for _, key := range []string{":", "点", "位", "enter"} {
-		m.key(key)
-	}
-	if m.view != 3 {
-		t.Fatal(m.view)
-	}
+func TestLocalizedLogDisplayKeepsRawRecords(t *testing.T) {
+	m := model{view: 6}
 	entry := observe.Log{Level: "INFO", Message: "channel_state", Fields: "[channel ch-1 status connected peers 1 ready_peers 1 error ]"}
-	m.view = 6
 	m.logs = []observe.Log{entry}
 	rows := m.rows()
 	if len(rows) != 1 || !strings.Contains(rows[0].text, "已连接") || !strings.Contains(rows[0].text, "通道状态变化") {

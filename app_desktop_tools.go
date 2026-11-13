@@ -118,30 +118,12 @@ func (a *App) ExportPointTable(channel, device, kind, format string) (string, er
 	}
 	return path, nil
 }
-func (a *App) GetRawTools(channel string) (core.RawToolsView, error) {
-	return a.engine.GetRawTools(channel)
-}
-func (a *App) SaveRawTools(channel string, cfg core.RawToolsConfig) error {
-	return a.engine.SaveRawTools(channel, cfg)
-}
-func (a *App) StartRawTask(channel, mode string) error { return a.engine.StartRawTask(channel, mode) }
-func (a *App) StopRawTask(channel, mode string) error  { return a.engine.StopRawTask(channel, mode) }
 func (a *App) RunDesktopTool(request desktoptools.Request) (desktoptools.Result, error) {
 	return desktoptools.Convert(request)
 }
-func (a *App) OpenRawTerminal(role string) error {
-	if role != "client" && role != "server" {
-		return errors.New("请选择主站或子站工作区")
-	}
-	return a.launchProjectWindow(projectWindowConfig{Name: "报文调试", Role: role, Raw: true})
-}
-
 func (a *App) CopyDesktopText(text string) error {
 	if len(text) > 1<<20 {
 		return errors.New("复制内容不能超过1MB")
 	}
 	return runtime.ClipboardSetText(a.ctx, text)
-}
-func (a *App) SendRawText(channel, text string, crc bool) error {
-	return a.engine.SendHex(channel, hex.EncodeToString([]byte(text)), crc)
 }

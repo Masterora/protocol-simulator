@@ -21,14 +21,13 @@ def address():
         return sock.getsockname()
 
 
-def project(path, endpoint, protocol='modbus-tcp'):
+def project(path, endpoint):
     rule = {'enabled': True, 'kind': 'holding', 'points': '0', 'start': 0, 'end': 0,
             'intervalMs': 200, 'mode': 'increment', 'min': 100, 'max': 200, 'step': 1}
-    channel = {'id': 'server', 'name': 'Linux acceptance', 'protocol': protocol, 'role': 'server',
+    channel = {'id': 'server', 'name': 'Linux acceptance', 'protocol': 'modbus-tcp', 'role': 'server',
                'transport': 'tcp-server', 'address': f'{endpoint[0]}:{endpoint[1]}', 'unit': 1,
                'devices': []}
-    if protocol != 'raw':
-        channel['devices'] = [{'id': 'device', 'name': 'device', 'unit': 1, 'commonAddress': 1,
+    channel['devices'] = [{'id': 'device', 'name': 'device', 'unit': 1, 'commonAddress': 1,
                                'points': [{'kind': 'holding', 'address': 0, 'name': 'value', 'value': 42, 'quality': 0}],
                                'dataTests': {'telemetry': {'rules': [rule], 'stopOnDisconnect': True}}}]
     path.write_text(json.dumps({'version': 1, 'name': 'Linux acceptance', 'channels': [channel]}))
@@ -113,16 +112,17 @@ def runtime(binary, directory):
         checks.append('explicit-data-on' if enabled else 'no-implicit-data')
     endpoint = address()
     path = directory / 'frames-project.json'
-    project(path, endpoint, 'raw')
+    project(path, endpoint)
     frames = directory / 'frames.jsonl'
     with (directory / 'pressure.jsonl').open('wb') as output:
         p = subprocess.Popen([binary, 'run', str(path), '--log-format', 'json', '--frames', str(frames), '--frames-max-mb', '1', '--frames-files', '3'], stdout=output, stderr=subprocess.STDOUT)
         try:
             with connect(endpoint) as sock:
-                sock.sendall(b'frame-pressure-' * 300000)
-            deadline = time.monotonic() + 10
-            while not frames.with_name(frames.name + '.2').exists() and time.monotonic() < deadline:
-                time.sleep(.1)
+                rotated = frames.with_name(frames.name + '.2')
+                for _ in range(20000):
+                    holding(sock)
+                    if rotated.exists():
+                        break
         finally:
             terminate(p)
     logs = list(directory.glob('frames.jsonl*'))

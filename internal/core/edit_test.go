@@ -14,7 +14,7 @@ import (
 
 func TestChannelMessageClearAndRename(t *testing.T) {
 	e := NewEngine()
-	id, err := e.UpsertChannel(Channel{Name: "before", Protocol: "raw", Role: "server", Transport: "tcp-server", Address: "127.0.0.1:0"})
+	id, err := e.UpsertChannel(Channel{Name: "before", Protocol: "modbus-tcp", Devices: []Device{}, Role: "server", Transport: "tcp-server", Address: "127.0.0.1:0"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestPointPatchPreservesLiveChanges(t *testing.T) {
 func TestInvalidReplacementKeepsConnection(t *testing.T) {
 	e := NewEngine()
 	defer e.StopAll()
-	id, err := e.UpsertChannel(Channel{Name: "active", Protocol: "raw", Transport: "tcp-server", Role: "server", Address: "127.0.0.1:0"})
+	id, err := e.UpsertChannel(Channel{Name: "active", Protocol: "modbus-tcp", Devices: []Device{}, Transport: "tcp-server", Role: "server", Address: "127.0.0.1:0"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestPointCellQualitySendsOnlyChangedServerPoint(t *testing.T) {
 
 func TestPointCellAddressValidationAndTabSurviveSave(t *testing.T) {
 	e := NewEngine()
-	id, err := e.UpsertChannel(Channel{Name: "table", Protocol: "raw", Role: "server", Transport: "tcp-server", Address: "127.0.0.1:0"})
+	id, err := e.UpsertChannel(Channel{Name: "table", Protocol: "modbus-tcp", Devices: []Device{}, Role: "server", Transport: "tcp-server", Address: "127.0.0.1:0"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +304,7 @@ func TestPointSelectionGrammarAndLimits(t *testing.T) {
 func TestMixedPointDeviceConfigurationPersistsAndRetainsPointData(t *testing.T) {
 	e := NewEngine()
 	t.Cleanup(e.StopAll)
-	id, err := e.UpsertChannel(Channel{Name: "points", Protocol: "raw", Role: "server", Transport: "tcp-server", Address: "127.0.0.1:0"})
+	id, err := e.UpsertChannel(Channel{Name: "points", Protocol: "modbus-tcp", Devices: []Device{}, Role: "server", Transport: "tcp-server", Address: "127.0.0.1:0"})
 	if err != nil {
 		t.Fatal(err)
 	}

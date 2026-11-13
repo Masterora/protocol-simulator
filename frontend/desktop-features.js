@@ -1,5 +1,4 @@
-// Desktop-only workflows. The engine owns running jobs; editor polling never
-// rewrites drafts, and closing an editor does not stop a project or channel.
+// Desktop point-table and toolbox workflows.
 globalThis.createDesktopFeatures = function (host) {
   const { $, api, ask, refresh } = host;
   const escape = (v) =>
@@ -11,13 +10,7 @@ globalThis.createDesktopFeatures = function (host) {
     tablePreview = null,
     tableTicket = 0,
     tableBusy = false,
-    packetView = null,
-    packetDirty = false,
-    packetBusy = false,
-    statusBusy = false,
-    tableTarget = [],
-    packetChannel = '',
-    packetTicket = 0;
+    tableTarget = [];
   const showError = (id, error) => {
     const el = $(id).querySelector('.form-error');
     el.textContent = error?.message || String(error);
@@ -182,198 +175,6 @@ globalThis.createDesktopFeatures = function (host) {
       showError('point-table-dialog', error);
     }
   });
-  const formats = [
-    ['hex', 'HEX'],
-    ['text', 'UTF-8文本'],
-  ];
-  const checksums = [
-    ['none', '不追加'],
-    ['crc16', 'Modbus CRC16低字节在前'],
-    ['crc16-high', 'Modbus CRC16高字节在前'],
-    ['sum', '累加和'],
-    ['xor', '异或'],
-  ];
-  function rawRow(type, value = {}) {
-    const tr = document.createElement('tr');
-    tr.dataset.packetRow = type;
-    const input = (key, v, numeric = false) =>
-      `<input data-packet-field="${key}" type="${numeric ? 'number' : 'text'}" value="${escape(v)}" aria-label="${escape({ offset: '识别起始字节', match: '识别内容', response: '应答报文', data: '发送报文', delayMs: '应答延迟' }[key] || key)}" ${numeric ? 'min="0" max="60000"' : ''}>`;
-    tr.innerHTML =
-      `<td class="packet-row-number"></td><td><input type="checkbox" data-packet-field="enabled" aria-label="启用" ${value.enabled !== false ? 'checked' : ''}></td>` +
-      (type === 'reply'
-        ? `<td>${input('offset', value.offset ?? 0, true)}</td><td>${input('match', value.match ?? '')}</td>`
-        : '') +
-      `<td>${input(type === 'reply' ? 'response' : 'data', value.response ?? value.data ?? '')}</td><td><select data-packet-field="format" aria-label="报文格式">${options(formats, value.format || 'hex')}</select></td><td><select data-packet-field="checksum" aria-label="追加校验">${options(checksums, value.checksum || 'none')}</select></td>` +
-      (type === 'reply' ? `<td>${input('delayMs', value.delayMs ?? 0, true)}</td>` : '') +
-      '<td><button type="button" data-packet-move="-1" aria-label="上移">↑</button><button type="button" data-packet-move="1" aria-label="下移">↓</button><button type="button" data-packet-delete aria-label="删除报文">×</button></td>';
-    return tr;
-  }
-  function numberRows() {
-    for (const id of ['packet-replies', 'packet-sends'])
-      [...$(id).children].forEach((r, i) => {
-        r.querySelector('.packet-row-number').textContent = String(i + 1);
-      });
-  }
-  function updateFraming() {
-    const framing = $('packet-framing').value;
-    for (const [id, mode] of [
-      ['packet-idle', 'idle'],
-      ['packet-length', 'fixed'],
-      ['packet-delimiter', 'delimiter'],
-    ])
-      $(id).closest('label').hidden = framing !== mode;
-  }
-  $('packet-framing').addEventListener('change', updateFraming);
-  function rawConfig() {
-    const rows = (id) =>
-      [...$(id).children].map((tr) => {
-        const row = {};
-        for (const el of tr.querySelectorAll('[data-packet-field]'))
-          row[el.dataset.packetField] =
-            el.type === 'checkbox'
-              ? el.checked
-              : el.type === 'number'
-                ? Number(el.value)
-                : el.value;
-        return row;
-      });
-    return {
-      framing: $('packet-framing').value,
-      frameLength: Number($('packet-length').value),
-      delimiter: $('packet-delimiter').value,
-      idleMs: Number($('packet-idle').value),
-      replies: rows('packet-replies'),
-      rows: rows('packet-sends'),
-      selection: $('packet-selection').value,
-      intervalMs: Number($('packet-interval').value),
-      cycleMs: Number($('packet-cycle').value),
-      cycles: Number($('packet-cycles').value),
-    };
-  }
-  function showPacketStatus(view) {
-    packetView = view;
-    for (const mode of ['reply', 'send']) {
-      const status = view[mode],
-        button = $('packet-' + mode + '-toggle');
-      button.textContent = status.running ? '停止' : '启动';
-      button.disabled = packetBusy;
-      $('packet-' + mode + '-status').textContent =
-        (status.running ? '运行中' : '未运行') +
-        ` · 已发送 ${status.sent}` +
-        (mode === 'send' ? ` · 已完成 ${status.cycles} 轮` : '') +
-        (status.error ? ' · ' + status.error : '');
-    }
-    const running = view.reply.running || view.send.running;
-    for (const el of $('packet-editor').querySelectorAll('input,select,button'))
-      el.disabled = running || packetBusy;
-    $('packet-save').disabled = running || packetBusy || !packetDirty;
-  }
-  async function initializePacket() {
-    clearError('packet-tools-dialog');
-    packetDirty = false;
-    packetView = null;
-    packetChannel = host.channel();
-    const ticket = ++packetTicket;
-    const view = await api('GetRawTools', packetChannel),
-      c = view.config;
-    if (ticket !== packetTicket) return;
-    $('packet-framing').value = c.framing;
-    $('packet-length').value = c.frameLength || 1;
-    $('packet-delimiter').value = c.delimiter || '0D0A';
-    $('packet-idle').value = c.idleMs || 30;
-    $('packet-selection').value = c.selection || '';
-    $('packet-interval').value = c.intervalMs;
-    $('packet-cycle').value = c.cycleMs;
-    $('packet-cycles').value = c.cycles;
-    $('packet-replies').replaceChildren(...c.replies.map((v) => rawRow('reply', v)));
-    $('packet-sends').replaceChildren(...c.rows.map((v) => rawRow('send', v)));
-    numberRows();
-    updateFraming();
-    showPacketStatus(view);
-    $('packet-tools-dialog').show();
-  }
-  $('open-packet-tools').addEventListener('click', () => {
-    if (host.protocol() !== 'raw') {
-      host.error('请先选择RAW调试通道，可从工具箱新建');
-      return;
-    }
-    initializePacket().catch(host.error);
-  });
-  for (const [button, type, table] of [
-    ['packet-add-reply', 'reply', 'packet-replies'],
-    ['packet-add-send', 'send', 'packet-sends'],
-  ])
-    $(button).addEventListener('click', () => {
-      if ($(table).children.length >= 256) {
-        showError('packet-tools-dialog', Error('每个列表最多256条'));
-        return;
-      }
-      $(table).append(rawRow(type));
-      numberRows();
-      packetDirty = true;
-      showPacketStatus(packetView);
-    });
-  $('packet-editor').addEventListener('input', () => {
-    packetDirty = true;
-    $('packet-save').disabled = false;
-  });
-  $('packet-editor').addEventListener('change', () => {
-    packetDirty = true;
-    $('packet-save').disabled = false;
-  });
-  $('packet-editor').addEventListener('click', (event) => {
-    const button = event.target.closest('[data-packet-delete],[data-packet-move]');
-    if (!button) return;
-    const row = button.closest('tr');
-    if (button.hasAttribute('data-packet-delete')) row.remove();
-    else if (button.dataset.packetMove === '-1' && row.previousElementSibling)
-      row.parentElement.insertBefore(row, row.previousElementSibling);
-    else if (button.dataset.packetMove === '1' && row.nextElementSibling)
-      row.parentElement.insertBefore(row.nextElementSibling, row);
-    numberRows();
-    packetDirty = true;
-    $('packet-save').disabled = false;
-  });
-  $('packet-save').addEventListener('click', async () => {
-    if (!packetView || packetBusy) return;
-    clearError('packet-tools-dialog');
-    const config = rawConfig();
-    ++packetTicket;
-    packetBusy = true;
-    showPacketStatus(packetView);
-    try {
-      await api('SaveRawTools', packetChannel, config);
-      packetDirty = false;
-      await refresh(true);
-      showPacketStatus(await api('GetRawTools', packetChannel));
-    } catch (error) {
-      showError('packet-tools-dialog', error);
-    } finally {
-      packetBusy = false;
-      showPacketStatus(packetView);
-    }
-  });
-  for (const mode of ['reply', 'send'])
-    $('packet-' + mode + '-toggle').addEventListener('click', async () => {
-      if (!packetView || packetBusy) return;
-      clearError('packet-tools-dialog');
-      if (!packetView[mode].running && packetDirty) {
-        showError('packet-tools-dialog', Error('请先保存报文配置'));
-        return;
-      }
-      ++packetTicket;
-      packetBusy = true;
-      showPacketStatus(packetView);
-      try {
-        await api(packetView[mode].running ? 'StopRawTask' : 'StartRawTask', packetChannel, mode);
-        showPacketStatus(await api('GetRawTools', packetChannel));
-      } catch (error) {
-        showError('packet-tools-dialog', error);
-      } finally {
-        packetBusy = false;
-        showPacketStatus(packetView);
-      }
-    });
   const toolSpecs = {
     number: [
       ['integer', '整数进制转换'],
@@ -423,15 +224,15 @@ globalThis.createDesktopFeatures = function (host) {
   let packetTool = 'iec104';
   let modbusOperation = 'request';
   let modbusInactiveInput = '';
-  let currentTool = 'number',
+  let currentTool = '',
     toolTicket = 0;
   const names = {
-    number: '数值转换',
-    encoding: '编码转换',
-    string: '文本处理',
     time: '时间戳',
     packet: '报文解析',
+    number: '数值转换',
     network: 'IPv4 网段',
+    encoding: '编码转换',
+    string: '文本处理',
   };
   const swaps = {
     encode: 'decode',
@@ -626,6 +427,7 @@ globalThis.createDesktopFeatures = function (host) {
     $('tool-output').hidden = !usesTextOutput();
     $('tool-fields').replaceChildren();
     $('toolbox-run').disabled = false;
+    $('tool-result-pane').removeAttribute('aria-busy');
     $('toolbox-parse').disabled = true;
     $('toolbox-copy').disabled = true;
     $('toolbox-swap').disabled = true;
@@ -653,7 +455,7 @@ globalThis.createDesktopFeatures = function (host) {
     $('tool-time-workspace').hidden = !timestamp;
     $('tool-time-unit-wrap').hidden = !timestamp;
     $('toolbox-run').hidden = timestamp;
-    $('toolbox-run').parentElement.hidden = timestamp;
+    $('tool-run-between').hidden = timestamp;
     syncTimeClock();
     $('tool-protocol-wrap').hidden = !isPacketTool(currentTool);
     $('tool-read-fields').hidden = !read;
@@ -695,8 +497,8 @@ globalThis.createDesktopFeatures = function (host) {
         operation === 'integer'
           ? '64位整数'
           : operation.startsWith('hex-')
-            ? `Float${bytes * 8}字节（HEX）`
-            : `Float${bytes * 8}数值`;
+            ? `Float${bytes * 8}（${bytes} 字节 HEX）`
+            : `Float${bytes * 8} 数值`;
       if (operation.startsWith('register')) label = `寄存器字节（${bytes} 字节 HEX）`;
       if (operation.startsWith('register') || operation.startsWith('hex-')) {
         const order = $('tool-order').value;
@@ -719,6 +521,11 @@ globalThis.createDesktopFeatures = function (host) {
       } else {
         sample = '1.5';
       }
+      output = operation.endsWith('-tohex')
+        ? '字节（HEX）'
+        : operation.startsWith('hex-')
+          ? '浮点数'
+          : '结果';
     } else if (currentTool === 'encoding') {
       label = operation === 'encode' ? '原始文本' : '编码字节（HEX）';
       output = operation === 'encode' ? '编码字节（HEX）' : '解码文本';
@@ -750,7 +557,7 @@ globalThis.createDesktopFeatures = function (host) {
       }[operation];
       [label, output, sample] = hint;
     } else if (cp56) {
-      label = 'CP56Time2a（7字节）';
+      label = 'CP56Time2a（7 字节 HEX）';
       sample = '00 00 00 00 81 01 1A';
     } else if (currentTool === 'network') {
       label = 'IPv4 地址与前缀（CIDR）';
@@ -971,6 +778,7 @@ globalThis.createDesktopFeatures = function (host) {
     clearToolResult();
     const ticket = toolTicket;
     $('toolbox-run').disabled = true;
+    $('tool-result-pane').setAttribute('aria-busy', 'true');
     try {
       const operation = $('tool-operation').value;
       const input = currentTool === 'modbus' && operation === 'read' ? '' : $('tool-input').value;
@@ -993,13 +801,21 @@ globalThis.createDesktopFeatures = function (host) {
         order: $('tool-order').value,
         zone: $('tool-zone').value,
       });
-      if (ticket === toolTicket) renderToolResult(result);
+      if (ticket === toolTicket) {
+        renderToolResult(result);
+        $('tool-output-label').scrollIntoView?.({ block: 'nearest' });
+      }
     } catch (error) {
       if (ticket === toolTicket) {
+        if (!$('tool-source').hidden) $('tool-input').setAttribute('aria-invalid', 'true');
         showError('toolbox-dialog', error);
+        $('tool-error').scrollIntoView?.({ block: 'nearest' });
       }
     } finally {
-      if (ticket === toolTicket) $('toolbox-run').disabled = false;
+      if (ticket === toolTicket) {
+        $('toolbox-run').disabled = false;
+        $('tool-result-pane').removeAttribute('aria-busy');
+      }
     }
   });
   $('open-toolbox').addEventListener('click', () => {
@@ -1018,27 +834,340 @@ globalThis.createDesktopFeatures = function (host) {
       if (ticket === toolTicket) showError('toolbox-dialog', error);
     }
   });
-  async function poll() {
-    if (!$('packet-tools-dialog').open || statusBusy || packetBusy || document.hidden) return;
-    statusBusy = true;
-    try {
-      const ticket = packetTicket,
-        channel = packetChannel;
-      const view = await api('GetRawTools', channel);
-      if (ticket === packetTicket && channel === packetChannel && !packetBusy)
-        showPacketStatus(view);
-    } catch (error) {
-      if (!packetBusy) showError('packet-tools-dialog', error);
-    } finally {
-      statusBusy = false;
+  let frames = [],
+    framePage = 0,
+    selectedFrame = null,
+    decodeTicket = 0;
+  const framePageSize = 100;
+  const frameDialog = 'field-tools-dialog';
+  const fieldDialog = $(frameDialog);
+  const framePanels = ['field-frames', 'field-check', 'field-ssh'];
+  const fieldTabs = [...fieldDialog.querySelectorAll('[data-field-panel]')];
+  function showFieldPanel(id) {
+    for (const panel of framePanels) $(panel).hidden = panel !== id;
+    for (const tab of fieldTabs) {
+      const active = tab.dataset.fieldPanel === id;
+      tab.classList.toggle('selected', active);
+      tab.setAttribute('aria-pressed', String(active));
+    }
+    clearError(frameDialog);
+  }
+  for (const tab of fieldTabs) tab.onclick = () => showFieldPanel(tab.dataset.fieldPanel);
+  $('open-field-tools').onclick = () => {
+    showFieldPanel('field-ssh');
+    renderFrames();
+    fieldDialog.showModal();
+  };
+  function renderFrames() {
+    const query = $('field-filter').value.trim().toLowerCase();
+    const direction = $('field-direction').value;
+    const matched = frames.filter((f) => {
+      return (
+        (!direction || f.direction === direction) &&
+        [f.time, f.channelId, f.peer, f.summary, f.hex].some((text) =>
+          String(text ?? '')
+            .toLowerCase()
+            .includes(query),
+        )
+      );
+    });
+    const pages = Math.max(1, Math.ceil(matched.length / framePageSize));
+    framePage = Math.min(framePage, pages - 1);
+    $('field-prev').disabled = framePage === 0;
+    $('field-next').disabled = framePage >= pages - 1;
+    $('field-page').textContent = matched.length
+      ? `${framePage + 1} / ${pages} · ${matched.length} 条`
+      : '无报文';
+    const fragment = document.createDocumentFragment();
+    for (const frame of matched.slice(framePage * framePageSize, (framePage + 1) * framePageSize)) {
+      const tr = document.createElement('tr');
+      tr.setAttribute('aria-selected', String(selectedFrame === frame));
+      const time = document.createElement('td');
+      tr.append(time);
+      const select = document.createElement('button');
+      select.type = 'button';
+      select.textContent = frame.time || '查看';
+      time.append(select);
+      for (const value of [
+        frame.channelId,
+        frame.direction === 'RX' ? '接收' : '发送',
+        frame.peer,
+        frame.summary,
+      ]) {
+        const cell = document.createElement('td');
+        cell.textContent = value || '—';
+        tr.append(cell);
+      }
+      tr.onclick = () => {
+        selectedFrame = frame;
+        for (const row of $('field-rows').children)
+          row.setAttribute('aria-selected', String(row === tr));
+        decodeFrame();
+      };
+      fragment.append(tr);
+    }
+    $('field-rows').replaceChildren(fragment);
+    if (selectedFrame && !matched.includes(selectedFrame)) {
+      selectedFrame = null;
+      decodeFrame();
     }
   }
-  setInterval(poll, 600);
+  async function decodeFrame() {
+    const ticket = ++decodeTicket;
+    const protocol = $('field-protocol').value;
+    $('field-transaction-wrap').hidden = protocol === 'iec104';
+    $('field-frame-detail').hidden = !selectedFrame;
+    $('field-hex').value = selectedFrame?.hex || '';
+    $('field-decoded').textContent = selectedFrame ? '解析中…' : '';
+    if (!selectedFrame) return;
+    try {
+      const decoded = await api('RunDesktopTool', {
+        kind: protocol === 'iec104' ? 'iec104' : 'modbus',
+        operation: protocol === 'iec104' ? 'decode' : $('field-transaction').value,
+        encoding: protocol,
+        input: selectedFrame.hex,
+      });
+      if (ticket === decodeTicket) {
+        $('field-decoded').textContent = (decoded.fields || [])
+          .map(({ name, value }) => `${name}  ${value}`)
+          .join('\n');
+      }
+    } catch (error) {
+      if (ticket === decodeTicket) $('field-decoded').textContent = error?.message || String(error);
+    }
+  }
+  function fieldAction(id, action) {
+    $(id).onclick = async () => {
+      $(id).disabled = true;
+      clearError(frameDialog);
+      try {
+        await action();
+      } catch (error) {
+        showError(frameDialog, error);
+      } finally {
+        $(id).disabled = false;
+      }
+    };
+  }
+  fieldAction('field-copy-hex', async () => {
+    if (selectedFrame) await api('CopyDesktopText', selectedFrame.hex);
+  });
+  fieldAction('field-open-frames', async () => {
+    const result = await api('OpenServerFrames');
+    if (result === null) return;
+    frames = result || [];
+    framePage = 0;
+    selectedFrame = null;
+    $('field-filter').value = '';
+    $('field-direction').value = '';
+    renderFrames();
+    decodeFrame();
+  });
+  $('field-filter').oninput = $('field-direction').onchange = () => {
+    framePage = 0;
+    renderFrames();
+  };
+  $('field-prev').onclick = () => {
+    framePage--;
+    renderFrames();
+  };
+  $('field-next').onclick = () => {
+    framePage++;
+    renderFrames();
+  };
+  $('field-protocol').onchange = $('field-transaction').onchange = decodeFrame;
+  fieldAction('field-run-check', async () => {
+    $('field-check-output').textContent = '';
+    const lines = await api('CheckServerDeployment', $('field-ip').value, $('field-rules').checked);
+    $('field-check-output').textContent = lines.join('\n');
+  });
+  const sshHost = $('field-host');
+  const savedHostsKey = 'gylab-ssh-hosts';
+  const lastHostKey = 'gylab-ssh-host';
+  let savedHosts = [];
+  try {
+    const saved = JSON.parse(localStorage.getItem(savedHostsKey) || '[]');
+    if (Array.isArray(saved)) savedHosts = saved.filter((host) => host?.target && host?.name);
+  } catch {}
+  const previousHost = localStorage.getItem(lastHostKey);
+  if (
+    previousHost &&
+    !savedHosts.some((host) => host.target === previousHost) &&
+    localStorage.getItem(savedHostsKey) === null
+  ) {
+    savedHosts.push({ name: previousHost, target: previousHost });
+    localStorage.setItem(savedHostsKey, JSON.stringify(savedHosts));
+  }
+  let editingHost = '';
+  function renderHostOptions(selected = sshHost.value || localStorage.getItem(lastHostKey)) {
+    const entries = savedHosts.map((host) => [host.target, host.name]);
+    const target = entries.some(([value]) => value === selected) ? selected : entries[0]?.[0] || '';
+    sshHost.innerHTML = entries.length
+      ? options(entries, target)
+      : '<option value="">暂无已保存主机</option>';
+    sshHost.value = target;
+    $('field-run-ssh').disabled = !target || sshHost.disabled;
+  }
+  async function loadSSHHosts() {
+    try {
+      const systemHosts = (await api('ListSSHHosts')) || [];
+      const entries = systemHosts.filter(
+        (target) => !savedHosts.some((host) => host.target === target),
+      );
+      $('field-import-host').innerHTML = options(
+        [['', '选择主机别名'], ...entries.map((target) => [target, target])],
+        '',
+      );
+      $('field-import-host-wrap').hidden = !entries.length;
+    } catch (error) {
+      showError(frameDialog, error);
+    }
+  }
+  function editHost(target) {
+    const saved = savedHosts.find((host) => host.target === target);
+    editingHost = saved?.target || '';
+    $('field-host-name').value = saved?.name || target;
+    $('field-host-target').value = target;
+    $('field-host-remove').disabled = !saved;
+  }
+  $('field-manage-hosts').onclick = () => {
+    const form = $('field-host-editor');
+    form.hidden = !form.hidden;
+    $('field-manage-hosts').setAttribute('aria-expanded', String(!form.hidden));
+    if (!form.hidden) {
+      editHost(sshHost.value);
+      loadSSHHosts();
+    }
+  };
+  $('field-import-host').onchange = (event) => {
+    const target = event.target.value;
+    if (!target) return;
+    editHost('');
+    $('field-host-target').value = target;
+    $('field-host-name').value = target;
+    $('field-host-name').focus();
+  };
+  $('field-host-new').onclick = () => {
+    editHost('');
+    $('field-host-target').focus();
+  };
+  function changeHostSelection() {
+    $('field-ssh-output').replaceChildren();
+    $('field-ssh-status').textContent = '';
+    clearError(frameDialog);
+    if (!$('field-host-editor').hidden) editHost(sshHost.value);
+  }
+  sshHost.onchange = changeHostSelection;
+  $('field-host-editor').onsubmit = (event) => {
+    event.preventDefault();
+    const target = $('field-host-target').value.trim();
+    const name = $('field-host-name').value.trim() || target;
+    if (
+      !/^(?:[A-Za-z0-9_][A-Za-z0-9_.-]*@)?(?:[A-Za-z0-9_][A-Za-z0-9_.-]*|\[[A-Fa-f0-9:]+\])$/.test(
+        target,
+      )
+    ) {
+      showError(frameDialog, '请输入 SSH 主机别名或 user@host');
+      return;
+    }
+    if (savedHosts.some((host) => host.target === target && host.target !== editingHost)) {
+      showError(frameDialog, '该连接目标已保存');
+      return;
+    }
+    const index = savedHosts.findIndex((host) => host.target === editingHost);
+    if (index < 0) savedHosts.push({ target, name });
+    else savedHosts[index] = { target, name };
+    localStorage.setItem(savedHostsKey, JSON.stringify(savedHosts));
+    renderHostOptions(target);
+    changeHostSelection();
+    loadSSHHosts();
+  };
+  $('field-host-remove').onclick = () => {
+    if (!editingHost) return;
+    savedHosts = savedHosts.filter((host) => host.target !== editingHost);
+    localStorage.setItem(savedHostsKey, JSON.stringify(savedHosts));
+    if (localStorage.getItem(lastHostKey) === editingHost) localStorage.removeItem(lastHostKey);
+    renderHostOptions('');
+    changeHostSelection();
+    loadSSHHosts();
+  };
+  renderHostOptions();
+  const channelStatuses = {
+    listening: '监听中',
+    connected: '已连接',
+    connecting: '连接中',
+    reconnecting: '重连中',
+    disconnected: '已断开',
+    stopped: '已停止',
+    error: '错误',
+  };
+  function renderSSHProjects(projects) {
+    return (
+      projects
+        .map(({ info, devices, warnings, error }) => {
+          if (error) return `<p class="field-project-warning">${escape(error)}</p>`;
+          const view = info.view;
+          const channels = (view.channels || []).map((c) => {
+            const names = (devices?.[c.id] || []).map((d) => `${d.name}（${d.points} 点）`);
+            const address = c.state.address || c.address || '—';
+            const status = channelStatuses[c.state.status] || c.state.status || '未启动';
+            return `<tr><th scope="row">${escape(c.name)}</th>
+          <td>${escape(c.protocol)}</td><td>${escape(status)}</td><td>${escape(address)}</td>
+          <td>${escape(c.state.peers ?? 0)}</td><td>${escape(names.join('、') || '—')}</td></tr>`;
+          });
+          const logs = (info.logs || []).map(
+            (l) => `${l.time} · ${l.level} · ${l.message} ${l.fields || ''}`,
+          );
+          return `<section class="field-project">
+        <div class="field-project-heading"><h3>${escape(view.name)}</h3><span>PID ${escape(info.pid)}</span></div>
+        ${view.path ? `<div class="field-project-path">${escape(view.path)}</div>` : ''}
+        ${
+          channels.length
+            ? `<div class="field-channel-table"><table>
+          <thead><tr><th>通道</th><th>协议</th><th>状态</th><th>地址</th><th>连接</th><th>装置</th></tr></thead>
+          <tbody>${channels.join('')}</tbody></table></div>`
+            : '<p class="field-empty">无通道</p>'
+        }
+        ${(warnings || []).map((warning) => `<p class="field-project-warning">${escape(warning)}</p>`).join('')}
+        ${logs.length ? `<details><summary>近期日志（${logs.length}）</summary><pre class="field-result">${escape(logs.join('\n'))}</pre></details>` : ''}
+      </section>`;
+        })
+        .join('') || '<p class="field-empty">未发现运行工程</p>'
+    );
+  }
+  $('field-ssh-form').onsubmit = async (event) => {
+    event.preventDefault();
+    const button = $('field-run-ssh');
+    if (button.disabled) return;
+    button.disabled = true;
+    sshHost.disabled = true;
+    $('field-manage-hosts').disabled = true;
+    $('field-host-editor').hidden = true;
+    $('field-manage-hosts').setAttribute('aria-expanded', 'false');
+    clearError(frameDialog);
+    const status = $('field-ssh-status');
+    const output = $('field-ssh-output');
+    status.textContent = '读取中…';
+    output.replaceChildren();
+    try {
+      const target = sshHost.value.trim();
+      const projects = await api('InspectServerSSH', target);
+      output.innerHTML = renderSSHProjects(projects);
+      localStorage.setItem(lastHostKey, target);
+      status.textContent = `已读取 · ${new Date().toLocaleTimeString()}`;
+    } catch (error) {
+      status.textContent = '';
+      showError(frameDialog, error);
+    } finally {
+      button.disabled = false;
+      sshHost.disabled = false;
+      $('field-manage-hosts').disabled = false;
+    }
+  };
   changeTool();
   return {
     initialize: async (kind) => {
       if (kind === 'point-table-dialog') await initializeTable();
-      if (kind === 'packet-tools-dialog') await initializePacket();
       if (kind === 'toolbox-dialog') {
         changeTool();
         $('toolbox-dialog').show();

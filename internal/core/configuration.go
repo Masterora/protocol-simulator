@@ -71,6 +71,9 @@ func cloneTransportDraft(values map[string]string) map[string]string {
 
 func mergeTransport(current *Channel, config Channel) {
 	current.Transport = config.Transport
+	if len(current.Devices) == 0 && current.Transport == "serial" {
+		current.Protocol = "modbus-rtu"
+	}
 	current.Address = config.Address
 	current.LocalAddress = config.LocalAddress
 	current.Baud = config.Baud
@@ -144,7 +147,7 @@ func (e *Engine) EnsureWorkspaceChannel(role string) error {
 	if len(e.project.Channels) >= 64 {
 		return errors.New("最多支持 64 个通道")
 	}
-	c := Channel{ID: newID(), Name: "通道1", Protocol: "raw", Role: role, Transport: "tcp-client", Address: "127.0.0.1:2404"}
+	c := Channel{ID: newID(), Name: "通道1", Protocol: "iec104", Devices: []Device{}, Role: role, Transport: "tcp-client", Address: "127.0.0.1:2404"}
 	if role == "server" {
 		c.Transport, c.Address = "tcp-server", net.JoinHostPort(DefaultListenIP(), "2404")
 	}

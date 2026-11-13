@@ -11,11 +11,18 @@ type choicePicker struct {
 	title  string
 	values []string
 	cursor int
+	start  int
 	apply  func(string)
 }
 
 func choiceLabel(key, value string) string {
 	switch key {
+	case "tableMode":
+		return translated(value, map[string]string{"merge": "合并，同地址覆盖", "replace-kind": "替换所选类型", "replace-all": "替换全部点表"})
+	case "exportScope":
+		return translated(value, map[string]string{"all": "装置全部点位", "category": "当前分类"})
+	case "exportFormat":
+		return strings.ToUpper(value)
 	case "kind", "pointKind":
 		return translated(value, kindLabels)
 	case "role":
@@ -23,7 +30,7 @@ func choiceLabel(key, value string) string {
 	case "mode":
 		return translated(value, modeLabels)
 	case "protocol":
-		return translated(value, map[string]string{"iec104": "IEC104", "modbus-tcp": "Modbus TCP", "modbus-rtu": "Modbus RTU", "raw": "RAW 原始数据"})
+		return translated(value, map[string]string{"iec104": "IEC104", "modbus-tcp": "Modbus TCP", "modbus-rtu": "Modbus RTU"})
 	case "transport":
 		return translated(value, transportLabels)
 	case "enabled", "stopOnDisconnect":
@@ -174,6 +181,8 @@ func (e *configurationEditor) fieldChoices(i int) []string {
 	return field.choices
 }
 func (e *configurationEditor) setChoice(i int, value string) {
+	e.caret = textCursor{}
+	e.endpointCaret = endpointCursor{}
 	if e.values[i] == value {
 		e.replace[i] = true
 		e.error = ""
@@ -219,27 +228,32 @@ func (m *model) pickerKey(key string) {
 	case "esc":
 		m.picker = nil
 		m.pickerLabels = nil
-	case "up", "left":
+	case "up":
 		p.cursor = max(0, p.cursor-1)
-	case "down", "right":
+	case "down":
 		p.cursor = min(len(p.values)-1, p.cursor+1)
 	case "pageup":
-		p.cursor = max(0, p.cursor-8)
+		step := m.overlayRows(m.terminalHeight)
+		p.cursor = max(0, p.cursor-step)
+		p.start = max(0, p.start-step)
 	case "pagedown":
-		p.cursor = min(len(p.values)-1, p.cursor+8)
+		step := m.overlayRows(m.terminalHeight)
+		p.cursor = min(len(p.values)-1, p.cursor+step)
+		p.start += step
 	case "home":
 		p.cursor = 0
 	case "end":
 		p.cursor = len(p.values) - 1
-	case "enter", " ":
+	case "enter":
 		p.apply(p.values[p.cursor])
 		m.picker = nil
 		m.pickerLabels = nil
 	}
 }
 func (m *model) pickerBody(width, height int) []string {
-	rows := max(1, height-m.overlayTop(height)-7)
-	start := max(0, m.picker.cursor-rows+1)
+	rows := m.overlayRows(height)
+	m.picker.start = visibleStart(m.picker.start, m.picker.cursor, rows, len(m.picker.values))
+	start := m.picker.start
 	end := min(len(m.picker.values), start+rows)
 	maxWidth := min(width-7, 108) - 4
 	out := []string{}
@@ -248,7 +262,7 @@ func (m *model) pickerBody(width, height int) []string {
 		if i == m.picker.cursor {
 			prefix = "› "
 		}
-		out = append(out, fit(prefix+m.pickerLabels[i], maxWidth))
+		out = append(out, clipped(prefix+m.pickerLabels[i], maxWidth, false))
 	}
 	return out
 }

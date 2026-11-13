@@ -13,19 +13,20 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/rivo/uniseg"
 )
 
 type configurationOperation struct {
+	transfer        *pointTransfer
 	socket          string
 	request         projectfile.Request
 	create          bool
 	path, name, dir string
 }
 type configurationResponse struct {
+	preview   *pointTransferPreview
 	operation configurationOperation
 	view      projectfile.View
 	result    projectfile.Result
@@ -36,12 +37,25 @@ type configurationField struct {
 	key, label string
 	choices    []string
 }
+
+const (
+	initialStart = "initial-start:"
+	initialCount = "initial-count:"
+)
+
 type configurationEditor struct {
+	submit            func(*configurationEditor) error
+	submitLabel       string
 	operation         configurationOperation
 	fields            []configurationField
 	values, original  []string
 	replace           []bool
 	focus             int
+	caret             textCursor
+	endpointCaret     endpointCursor
+	initialTable      int
+	start             int
+	visibleRows       int
 	error             string
 	title             string
 	pathEdited        bool
@@ -62,7 +76,7 @@ func configurationFields(resource, action, protocol string) []configurationField
 		return []configurationField{{key: "name", label: "工程名称"}}
 	case "channel":
 		return []configurationField{
-			{key: "name", label: "通道名称"}, {"protocol", "协议", []string{"iec104", "modbus-tcp", "modbus-rtu", "raw"}}, {"role", "角色", []string{"server", "client"}}, {"transport", "连接方式", []string{"tcp-server", "tcp-client", "serial", "udp"}}, {key: "address", label: "通信地址"}, {key: "localAddress", label: "本地绑定"}, {key: "timeoutMs", label: "超时(ms)"}, {"baud", "波特率", []string{"1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"}}, {"parity", "校验位", []string{"N", "E", "O"}}, {"dataBits", "数据位", []string{"5", "6", "7", "8"}}, {"stopBits", "停止位", []string{"1", "2"}},
+			{key: "name", label: "通道名称"}, {"protocol", "协议", []string{"iec104", "modbus-tcp", "modbus-rtu"}}, {"role", "角色", []string{"server", "client"}}, {"transport", "连接方式", []string{"tcp-server", "tcp-client", "serial"}}, {key: "address", label: "通信地址"}, {key: "localAddress", label: "本地绑定"}, {key: "timeoutMs", label: "超时(ms)"}, {"baud", "波特率", []string{"1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"}}, {"parity", "校验位", []string{"N", "E", "O"}}, {"dataBits", "数据位", []string{"5", "6", "7", "8"}}, {"stopBits", "停止位", []string{"1", "2"}},
 		}
 	case "device":
 		fields := []configurationField{{key: "name", label: "装置名称"}}
@@ -72,18 +86,12 @@ func configurationFields(resource, action, protocol string) []configurationField
 			fields = append(fields, configurationField{key: "unit", label: "站号"})
 		}
 		if action == "add" {
-			kinds := []string{"yx", "yc", "yk", "yt", "mc", "position", "step"}
-			if strings.HasPrefix(protocol, "modbus-") {
-				kinds = []string{"holding", "input", "coil", "discrete"}
-			}
+			kinds := projectfile.DevicePointKinds(protocol)
 			fields = append(fields, configurationField{key: "pointCount", label: "初始点数"}, configurationField{"pointKind", "初始类型", kinds}, configurationField{key: "pointStart", label: "起始点位"})
 		}
 		return fields
 	case "point":
-		kinds := []string{"yx", "yc", "yk", "yt", "mc", "position", "step"}
-		if strings.HasPrefix(protocol, "modbus-") {
-			kinds = []string{"holding", "input", "coil", "discrete"}
-		}
+		kinds := projectfile.DevicePointKinds(protocol)
 		fields := []configurationField{{"kind", "点位类型", kinds}, {key: "address", label: "点位"}, {key: "name", label: "描述"}, {key: "value", label: "数值"}, {"quality", "品质", qualityChoices()}}
 		if protocol == "iec104" {
 			fields = append(fields, configurationField{"wireType", "报文类型", []string{"0"}})
@@ -136,8 +144,33 @@ func newConfigurationEditor(operation configurationOperation, view projectfile.V
 	if formAction == "add" || operation.create {
 		editor.title = "新增" + label
 	}
+	if resource == "device" {
+		if view.Protocol != "" {
+			editor.title += " · " + choiceLabel("protocol", view.Protocol)
+		}
+		if formAction == "add" && len(view.Value["initialPoints"]) != 0 {
+			editor.fields = configurationFields(resource, "edit", view.Protocol)
+			editor.initialTable = len(editor.fields)
+			for _, kind := range projectfile.DevicePointKinds(view.Protocol) {
+				label := kindLabels[kind]
+				editor.fields = append(editor.fields,
+					configurationField{key: initialStart + kind, label: label + "起始点位"},
+					configurationField{key: initialCount + kind, label: label + "点数"},
+				)
+			}
+		}
+	}
 	for _, field := range editor.fields {
 		value := displayField(resource, field, view.Value[field.key])
+		if resource == "channel" && formAction == "add" && field.key == "address" {
+			value = ""
+		}
+		if kind, ok := strings.CutPrefix(field.key, initialStart); ok {
+			value = strconv.FormatUint(uint64(projectfile.DevicePointStart(view.Protocol, kind)), 10)
+		}
+		if strings.HasPrefix(field.key, initialCount) {
+			value = strconv.Itoa(projectfile.DefaultDevicePointCount)
+		}
 		editor.values = append(editor.values, value)
 		editor.original = append(editor.original, value)
 		editor.replace = append(editor.replace, true)
@@ -176,6 +209,14 @@ func (m *model) configurationTarget(action string) (configurationOperation, bool
 	}
 	if !m.connected || !m.detail.ConfigurationOperations {
 		m.setOperationNotice("请连接支持配置编辑的工程；旧服务需升级")
+		return operation, false
+	}
+	if action == "add" && m.view >= 2 && operation.request.Channel == "" {
+		m.setOperationNotice("请先在通道页选中通道")
+		return operation, false
+	}
+	if action == "add" && m.view >= 3 && operation.request.Device == "" {
+		m.setOperationNotice("请先在装置页选中装置")
 		return operation, false
 	}
 	rows := m.rows()
@@ -256,13 +297,135 @@ func (m *model) toggleChannel() {
 	m.pendingConfiguration = &operation
 	m.operationBusy = true
 }
+func toolEditor(title, submitLabel string, fields []configurationField, values []string, submit func(*configurationEditor) error) *configurationEditor {
+	replace := make([]bool, len(values))
+	for i := range replace {
+		replace[i] = true
+	}
+	return &configurationEditor{title: title, submitLabel: submitLabel, fields: fields, values: values, replace: replace, submit: submit}
+}
+
+func (e *configurationEditor) acceptsText(index int) bool {
+	key := e.fields[index].key
+	return key == "baud" || key == "address" || len(e.fieldChoices(index)) == 0
+}
+
+func (e *configurationEditor) focusField(index int) {
+	e.focus = index
+	e.replace[index] = true
+	e.caret = textCursor{}
+	e.endpointCaret = endpointCursor{}
+}
+
+func (e *configurationEditor) endpoint(i int) (endpointParts, bool) {
+	key := e.fields[i].key
+	if e.operation.request.Resource != "channel" || (key != "address" && key != "localAddress") || e.value("transport") == "serial" {
+		return endpointParts{}, false
+	}
+	return parseEndpoint(e.values[i])
+}
+
+func (e *configurationEditor) rowForField(field int) int {
+	if e.operation.request.Resource == "channel" {
+		row := 0
+		for i := range field {
+			if e.fieldVisible(i) {
+				row++
+			}
+		}
+		return row
+	}
+	if e.initialTable > 0 && field >= e.initialTable {
+		return e.initialTable + (field-e.initialTable)/2
+	}
+	return field
+}
+
+func (e *configurationEditor) fieldForRow(row int) int {
+	if e.operation.request.Resource == "channel" {
+		for i := range e.fields {
+			if e.fieldVisible(i) {
+				if row == 0 {
+					return i
+				}
+				row--
+			}
+		}
+	}
+	if e.initialTable > 0 && row >= e.initialTable {
+		return e.initialTable + (row-e.initialTable)*2
+	}
+	return row
+}
+
+func (e *configurationEditor) rowCount() int {
+	if e.operation.request.Resource == "channel" {
+		return e.rowForField(len(e.fields))
+	}
+	return e.rowForField(len(e.fields)-1) + 1
+}
+
+func (e *configurationEditor) fieldVisible(index int) bool {
+	if e.operation.request.Resource == "channel" {
+		switch e.fields[index].key {
+		case "localAddress":
+			return e.value("transport") == "tcp-client"
+		case "baud", "parity", "dataBits", "stopBits":
+			return e.value("transport") == "serial"
+		}
+	}
+	return true
+}
+
+func (e *configurationEditor) focusRow(row int) {
+	field := e.fieldForRow(row)
+	if e.initialTable > 0 && e.focus >= e.initialTable && field >= e.initialTable {
+		field += (e.focus - e.initialTable) % 2
+	}
+	e.focusField(field)
+}
+
+func (e *configurationEditor) initialSelections() (map[string]string, error) {
+	var selections map[string]string
+	for i, field := range e.fields {
+		kind, ok := strings.CutPrefix(field.key, initialCount)
+		if !ok {
+			continue
+		}
+		if selections == nil {
+			selections = map[string]string{}
+		}
+		count, err := strconv.Atoi(strings.TrimSpace(e.values[i]))
+		if err != nil || count < 0 || count > 10000 {
+			e.focusField(i)
+			return nil, fmt.Errorf("%s应为 0–10000 的整数", field.label)
+		}
+		if count == 0 {
+			continue
+		}
+		text := strings.TrimSpace(e.values[i-1])
+		base := 10
+		if strings.HasPrefix(strings.ToLower(text), "0x") {
+			base = 0
+		}
+		start, err := strconv.ParseUint(text, base, 24)
+		if err != nil {
+			e.focusField(i - 1)
+			return nil, fmt.Errorf("%s应为有效的非负整数", e.fields[i-1].label)
+		}
+		selections[kind] = fmt.Sprintf("%d-%d", start, start+uint64(count)-1)
+	}
+	return selections, nil
+}
+
 func (m *model) configurationKey(key string) {
 	editor := m.configurationEditor
 	if editor == nil {
 		return
 	}
 	i := editor.focus
-	if len(editor.fieldChoices(i)) > 0 && editor.fields[i].key != "baud" && editor.fields[i].key != "address" && (key == "ctrl-u" || key == "backspace" || utf8.RuneCountInString(key) == 1 && key != " ") {
+	editable := editor.acceptsText(i)
+	if !editable && (key == "ctrl-u" || key == "backspace" || key == "delete" || utf8.RuneCountInString(key) == 1 && key != " ") {
 		editor.error = "此项使用 ←/→ 切换，空格打开选项"
 		return
 	}
@@ -270,27 +433,54 @@ func (m *model) configurationKey(key string) {
 		m.openChoices(editor.fieldLabel(editor.fields[i]), editor.fields[i].key, editor.values[i], editor.fieldChoices(i), func(v string) { editor.setChoice(i, v) })
 		return
 	}
+	if parts, ok := editor.endpoint(i); ok {
+		if editor.endpointCaret.key(&parts, &editor.replace[i], key) {
+			editor.values[i] = parts.string()
+			editor.error = ""
+			return
+		}
+	}
 	switch key {
 	case "esc":
 		m.configurationEditor = nil
 		return
-	case "tab", "down":
-		editor.focus = (i + 1) % len(editor.fields)
-		editor.replace[editor.focus] = true
+	case "tab":
+		next := (i + 1) % len(editor.fields)
+		for !editor.fieldVisible(next) {
+			next = (next + 1) % len(editor.fields)
+		}
+		editor.focusField(next)
 		return
-	case "up", "shift-tab":
-		editor.focus = (i + len(editor.fields) - 1) % len(editor.fields)
-		editor.replace[editor.focus] = true
+	case "shift-tab":
+		previous := (i + len(editor.fields) - 1) % len(editor.fields)
+		for !editor.fieldVisible(previous) {
+			previous = (previous + len(editor.fields) - 1) % len(editor.fields)
+		}
+		editor.focusField(previous)
+		return
+	case "up", "down":
+		total := editor.rowCount()
+		step := 1
+		if key == "up" {
+			step = -1
+		}
+		editor.focusRow((editor.rowForField(i) + total + step) % total)
 		return
 	case "pagedown":
-		editor.focus = min(len(editor.fields)-1, i+5)
-		editor.replace[editor.focus] = true
+		step := max(1, editor.visibleRows)
+		editor.focusRow(min(editor.rowCount()-1, editor.rowForField(i)+step))
+		editor.start += step
 		return
 	case "pageup":
-		editor.focus = max(0, i-5)
-		editor.replace[editor.focus] = true
+		step := max(1, editor.visibleRows)
+		editor.focusRow(max(0, editor.rowForField(i)-step))
+		editor.start = max(0, editor.start-step)
 		return
 	case "left", "right":
+		if editable {
+			editor.caret.key(&editor.values[i], &editor.replace[i], key, 4096)
+			return
+		}
 		choices := editor.fieldChoices(i)
 		if len(choices) == 0 {
 			return
@@ -311,20 +501,13 @@ func (m *model) configurationKey(key string) {
 			step = 0
 		}
 		editor.setChoice(i, choices[(index+len(choices)+step)%len(choices)])
-	case "ctrl-u":
-		editor.values[i] = ""
-		editor.replace[i] = false
-	case "backspace":
-		if editor.replace[i] {
-			editor.values[i] = ""
-		} else {
-			runes := []rune(editor.values[i])
-			if len(runes) > 0 {
-				editor.values[i] = string(runes[:len(runes)-1])
-			}
-		}
-		editor.replace[i] = false
 	case "enter":
+		if editor.submit != nil {
+			if err := editor.submit(editor); err != nil {
+				editor.error = err.Error()
+			}
+			return
+		}
 		operation := editor.operation
 		if operation.create {
 			operation.name, operation.path = strings.TrimSpace(editor.values[0]), strings.TrimSpace(editor.values[1])
@@ -338,7 +521,15 @@ func (m *model) configurationKey(key string) {
 				operation.request.Action = "add"
 			}
 			operation.request.Fields = map[string]json.RawMessage{}
+			initialPoints, err := editor.initialSelections()
+			if err != nil {
+				editor.error = err.Error()
+				return
+			}
 			for j, field := range editor.fields {
+				if !editor.fieldVisible(j) || strings.HasPrefix(field.key, initialStart) || strings.HasPrefix(field.key, initialCount) {
+					continue
+				}
 				if operation.request.Action == "edit" && editor.values[j] == editor.original[j] {
 					continue
 				}
@@ -351,13 +542,25 @@ func (m *model) configurationKey(key string) {
 					operation.request.Fields["mappings"] = fields["mappings"]
 					continue
 				}
-				raw, err := projectfile.ParseField(operation.request.Resource, field.key, editor.values[j])
+				value := editor.values[j]
+				if parts, ok := editor.endpoint(j); ok && (value != "" || field.key == "address") {
+					value, err = parts.checked()
+					if err != nil {
+						editor.error = editor.fieldLabel(field) + "：" + err.Error()
+						editor.focusField(j)
+						return
+					}
+				}
+				raw, err := projectfile.ParseField(operation.request.Resource, field.key, value)
 				if err != nil {
-					editor.error = err.Error()
-					editor.focus = j
+					editor.error = editor.fieldLabel(field) + "：" + err.Error()
+					editor.focusField(j)
 					return
 				}
 				operation.request.Fields[field.key] = raw
+			}
+			if initialPoints != nil {
+				operation.request.Fields["initialPoints"], _ = json.Marshal(initialPoints)
 			}
 			if operation.request.Action == "edit" && len(operation.request.Fields) == 0 {
 				m.configurationEditor = nil
@@ -369,18 +572,9 @@ func (m *model) configurationKey(key string) {
 		m.operationBusy = true
 		return
 	default:
-		r, _ := utf8.DecodeRuneInString(key)
-		if utf8.RuneCountInString(key) != 1 || unicode.IsControl(r) {
+		if !editable || !editor.caret.key(&editor.values[i], &editor.replace[i], key, 4096) {
 			return
 		}
-		if editor.replace[i] {
-			editor.values[i] = ""
-			editor.replace[i] = false
-		}
-		if len(editor.values[i])+len(key) > 4096 {
-			return
-		}
-		editor.values[i] += key
 	}
 	if editor.operation.create {
 		if i == 1 {
@@ -395,6 +589,10 @@ func (m *model) configurationKey(key string) {
 }
 func performConfiguration(ctx context.Context, operation configurationOperation) configurationResponse {
 	reply := configurationResponse{operation: operation}
+	if operation.transfer != nil {
+		performPointTransfer(ctx, *operation.transfer, &reply)
+		return reply
+	}
 	if operation.create {
 		doc, err := projectfile.Create(operation.path, operation.name)
 		if err != nil {
@@ -407,7 +605,7 @@ func performConfiguration(ctx context.Context, operation configurationOperation)
 		reply.err = err
 		if err == nil {
 			reply.result.Applied = true
-			reply.result.Message = "已创建独立工程，通道保持停止"
+			reply.result.Message = "空工程已创建，进入通道页按 n 新增"
 		}
 		return reply
 	}
@@ -416,6 +614,10 @@ func performConfiguration(ctx context.Context, operation configurationOperation)
 }
 func (m *model) applyConfiguration(reply configurationResponse) {
 	m.operationBusy = false
+	if reply.operation.transfer != nil || reply.operation.request.Resource == "point-table" {
+		m.applyPointTransfer(reply)
+		return
+	}
 	if reply.err != nil {
 		if reply.result.Saved {
 			m.configurationEditor = nil
@@ -478,65 +680,112 @@ func (e *configurationEditor) fieldLabel(field configurationField) string {
 		if field.key == "address" {
 			return addressLabel(e.value("transport"))
 		}
-		if field.key == "localAddress" && e.value("transport") == "udp" {
-			return "监听地址"
-		}
 	}
 	return field.label
 }
+
+const (
+	initialTypeWidth  = 12
+	initialStartWidth = 16
+	initialCountWidth = 10
+)
+
+func initialPointHeading() string {
+	return "  " + fit("类型", initialTypeWidth) + "  " + fit("起始点位", initialStartWidth) + "  点数"
+}
+
+func (e *configurationEditor) displayValue(i, width int) string {
+	if parts, ok := e.endpoint(i); ok {
+		return e.endpointCaret.render(parts, i == e.focus)
+	}
+	value := e.values[i]
+	if i == e.focus && e.acceptsText(i) {
+		return e.caret.render(value, width)
+	}
+	if len(e.fieldChoices(i)) > 0 && !e.acceptsText(i) {
+		value = "‹ " + choiceLabel(e.fields[i].key, value) + " ›"
+	}
+	if value == "" {
+		value = "（空）"
+	}
+	return clipped(value, width, false)
+}
+
 func (m *model) configurationBody(width, height int) []string {
 	editor := m.configurationEditor
 	if editor == nil {
 		return nil
 	}
-	rows := max(1, height-m.overlayTop(height)-9)
-	start := max(0, editor.focus-rows+1)
-	end := min(len(editor.fields), start+rows)
 	var lines []string
 	contentWidth := min(width-7, 108) - 4
+	capacity := m.overlayRows(height)
+	if editor.error != "" {
+		errorLines := wrap("错误 "+editor.error, contentWidth)
+		limit := min(len(errorLines), max(1, capacity-2))
+		lines = append(lines, errorLines[:limit]...)
+		if limit < len(errorLines) {
+			lines[limit-1] = clipped(lines[limit-1]+errorLines[limit], contentWidth, false)
+		}
+	}
+	var hint string
+	switch {
+	case editor.bindingsAvailable && len(editor.bindingTargets) == 0:
+		hint = "无可绑定点位。请先新增同装置的遥信或遥测。"
+	case editor.bindingsAvailable && editor.focus >= editor.bindingStart:
+		hint = "填点位 301-302 或 301,311，留空解除绑定。"
+	case editor.fields[editor.focus].key == "baud":
+		hint = "可选常用波特率，也可输入自定义值。"
+	case editor.initialTable > 0 && capacity >= 6:
+		hint = "点数为 0 时跳过该类型。"
+	case editor.operation.create:
+		hint = "新工程从空白开始，通道在通道页添加。"
+	case editor.operation.request.Resource == "rule" && editor.fields[editor.focus].key == "enabled":
+		hint = "仅启用的规则运行。Modbus 由主站轮询读取。"
+	}
+	rows := capacity - len(lines)
+	if hint != "" && rows > 2 {
+		rows--
+	} else {
+		hint = ""
+	}
+	if editor.initialTable > 0 && rows > 1 {
+		rows--
+	}
+	editor.visibleRows = rows
+	total := editor.rowCount()
+	focus := editor.rowForField(editor.focus)
+	editor.start = visibleStart(editor.start, focus, rows, total)
+	end := min(total, editor.start+rows)
 	labelWidth := 0
-	for _, field := range editor.fields {
+	baseFields := editor.fields
+	if editor.initialTable > 0 {
+		baseFields = baseFields[:editor.initialTable]
+	}
+	for _, field := range baseFields {
 		labelWidth = max(labelWidth, uniseg.StringWidth(editor.fieldLabel(field)))
 	}
 	labelWidth = min(labelWidth, contentWidth/2)
-	if editor.error != "" {
-		lines = append(lines, clipped(editor.error, contentWidth, false))
-	}
-	for i := start; i < end; i++ {
+	for row := editor.start; row < end; row++ {
 		prefix := "  "
-		if i == editor.focus {
+		if row == focus {
 			prefix = "› "
 		}
-		value := editor.values[i]
-		if len(editor.fieldChoices(i)) > 0 {
-			value = "‹ " + choiceLabel(editor.fields[i].key, value) + " ›"
+		i := editor.fieldForRow(row)
+		if editor.initialTable > 0 && i >= editor.initialTable {
+			if row == max(editor.start, editor.initialTable) {
+				lines = append(lines, initialPointHeading())
+			}
+			kind := strings.TrimPrefix(editor.fields[i].key, initialStart)
+			start := fit(editor.displayValue(i, initialStartWidth), initialStartWidth)
+			count := editor.displayValue(i+1, initialCountWidth)
+			lines = append(lines, prefix+fit(kindLabels[kind], initialTypeWidth)+"  "+start+"  "+count)
+			continue
 		}
-		if value == "" {
-			value = "（空）"
-		}
-		value = clipped(value, contentWidth-labelWidth-4, i == editor.focus)
-		lines = append(lines, prefix+fit(editor.fieldLabel(editor.fields[i]), labelWidth)+"  "+value)
+		valueWidth := contentWidth - labelWidth - 4
+		lines = append(lines, prefix+fit(editor.fieldLabel(editor.fields[i]), labelWidth)+"  "+editor.displayValue(i, valueWidth))
 	}
-	if len(editor.fieldChoices(editor.focus)) > 0 {
-		lines = append(lines, "←/→ 切换 · 空格打开选项")
-		if editor.fields[editor.focus].key == "baud" {
-			lines = append(lines, "支持选择常用波特率，也可输入自定义值。")
-		}
-	}
-	if editor.operation.request.Resource == "rule" {
-		lines = append(lines, "仅启用的规则运行；Modbus 由主站轮询读取。")
-	}
-	if editor.bindingsAvailable && len(editor.bindingTargets) == 0 {
-		lines = append(lines, "无可绑定点位，请先在同一装置新增遥信或遥测。")
-	}
-	if editor.bindingsAvailable && editor.focus >= editor.bindingStart {
-		lines = append(lines, "输入点位（如 301-302 或 301,311），留空取消该方向的绑定。")
-	}
-	if editor.operation.create {
-		lines = append(lines, "新工程独立运行；退出界面不会停止工程。")
-	}
-	if m.operationBusy {
-		lines = append([]string{"正在保存，请等待实际结果…"}, lines...)
+	if hint != "" {
+		lines = append(lines, clipped(hint, contentWidth, false))
 	}
 	return lines
 }

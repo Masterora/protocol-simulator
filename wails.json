@@ -12,7 +12,7 @@
   },
   "info": {
     "productName": "protocol-simulator",
-    "productVersion": "1.0.2",
+    "productVersion": "1.1.0",
     "comments": "Go + Wails 协议调试工作台"
   }
 }

@@ -739,13 +739,6 @@ globalThis.originalForms = {
   },
   network: {
     controls: {
-      rbUDP: {
-        id: 'rbUDP',
-        type: 'RadioButton',
-        location: [168, 26],
-        text: 'UDP',
-        parent: 'groupBoxEx1',
-      },
       rbCom: {
         id: 'rbCom',
         type: 'RadioButton',

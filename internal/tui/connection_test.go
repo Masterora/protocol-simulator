@@ -16,7 +16,7 @@ import (
 func TestConnectionLabelsFollowTransportIndependentlyOfStationRole(t *testing.T) {
 	m := channelEditorModel()
 	e := m.configurationEditor
-	for _, transport := range []string{"tcp-client", "tcp-server", "udp", "serial"} {
+	for _, transport := range []string{"tcp-client", "tcp-server", "serial"} {
 		e.setChoice(configField(e, "transport"), transport)
 		for _, role := range []string{"server", "client"} {
 			e.setChoice(configField(e, "role"), role)
@@ -35,7 +35,7 @@ func TestConnectionLabelsFollowTransportIndependentlyOfStationRole(t *testing.T)
 			if m.channelAddressTitle() != label {
 				t.Fatal(m.channelAddressTitle(), label)
 			}
-			text := strings.Join(detailJSONLines(m.detail.View.Channels[0]), "\n")
+			text := strings.Join(formatDetailLines(m.detail.View.Channels[0]), "\n")
 			if !strings.Contains(text, label) || !strings.Contains(text, translated(transport, transportLabels)) {
 				t.Fatal(text)
 			}

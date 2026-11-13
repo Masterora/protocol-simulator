@@ -55,7 +55,7 @@ func TestPointCommandRuntimeOnlyTargetsProcessAndLeavesConfigurationUntouched(t 
 
 func TestPointCommandRejectsIncompleteAmbiguousAndInvalidInput(t *testing.T) {
 	base := []string{"point", "set", "--pid", "123", "--channel", "c", "--device", "d", "--kind", "yc", "--address", "0"}
-	cases := [][]string{{"point"}, {"point", "set"}, append(append([]string{}, base...), "--value", "NaN"), append(append([]string{}, base...), "--quality", "256"), {"point", "report", "--pid", "123", "--channel", "c", "--device", "d", "--kind", "yc", "--address", "0", "--value", ""}}
+	cases := [][]string{{"point", "set"}, append(append([]string{}, base...), "--value", "NaN"), append(append([]string{}, base...), "--quality", "256"), {"point", "report", "--pid", "123", "--channel", "c", "--device", "d", "--kind", "yc", "--address", "0", "--value", ""}}
 	for _, args := range cases {
 		var out, stderr bytes.Buffer
 		if code := Execute(context.Background(), args, &out, &stderr, "test"); code != 2 {

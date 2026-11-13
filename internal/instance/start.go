@@ -41,11 +41,15 @@ func Start(ctx context.Context, path, dir string) (Started, error) {
 	if err != nil {
 		return result, err
 	}
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		return result, err
+	state := os.Getenv("XDG_STATE_HOME")
+	if !filepath.IsAbs(state) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return result, err
+		}
+		state = filepath.Join(home, ".local", "state")
 	}
-	logs := filepath.Join(cache, "protocol-simulator", "server-logs")
+	logs := filepath.Join(state, "protocol-simulator", "server-logs")
 	if err = os.MkdirAll(logs, 0700); err != nil {
 		return result, err
 	}

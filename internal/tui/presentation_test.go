@@ -70,11 +70,11 @@ func TestSelectedChannelRoleIsVisibleAcrossResourceViewsAndRefreshes(t *testing.
 
 func TestRemovedKeysDoNotNavigateButRemainSearchableText(t *testing.T) {
 	m := model{view: 3, cursor: 1, detail: observe.Info{View: core.Inspection{Points: []core.Point{{Kind: "yc", Address: 1}, {Kind: "yc", Address: 2}}}}}
-	for _, key := range []string{"d", "j", "k"} {
+	for _, key := range []string{"d", "j", "k", "f", "l", ":", "g", "delete", "f1"} {
 		m.key(key)
 	}
-	if m.cursor != 1 || m.detailOpen {
-		t.Fatal("removed shortcuts still active", m.cursor, m.detailOpen)
+	if m.cursor != 1 || m.detailOpen || m.searching || m.help || m.view != 3 {
+		t.Fatal("unlisted shortcuts still active", m)
 	}
 	m.key("up")
 	if m.cursor != 0 {
@@ -113,18 +113,37 @@ func TestRemovedKeysDoNotNavigateButRemainSearchableText(t *testing.T) {
 	}
 }
 
+func TestDeviceShortcutsRespectTheSelectedChannelsCapacity(t *testing.T) {
+	m := deletableModel()
+	m.view = 2
+	m.detail.View.Channels[0].Devices = 1
+	m.detail.View.Devices = []core.InspectDevice{{ID: "d", Name: "装置"}}
+	hints := m.actionHints(130)
+	if strings.Contains(hints, "[n]") || !strings.Contains(hints, "[e]") || !strings.Contains(hints, "[x]") {
+		t.Fatal(hints)
+	}
+	m.key("n")
+	if m.pendingConfiguration != nil {
+		t.Fatal("IEC104 with an existing device offered another")
+	}
+	m.detail.View.Channels[0].Protocol = "modbus-tcp"
+	if !strings.Contains(m.actionHints(130), "[n]") {
+		t.Fatal("Modbus channel cannot add devices")
+	}
+}
+
 func TestCurrentPageAndCategoryUseColorWithoutBrackets(t *testing.T) {
 	m := model{view: 3, pointKind: "yc"}
 	m.detail.View.PointKinds = map[string]int{"yx": 21, "yc": 61, "yk": 10, "yt": 2}
 	for _, width := range []int{60, 90, 150} {
 		raw := m.render(width, 24)
 		plain := strings.Split(stripStyles(raw), "\r\n")
-		if strings.ContainsAny(plain[3], "[]") || !strings.HasPrefix(plain[4], "┌ 点位 ") {
-			t.Fatal(plain[3], plain[4])
+		if strings.ContainsAny(plain[3], "[]") || !strings.HasPrefix(plain[5], "┌ 点位 ") {
+			t.Fatal(plain[3], plain[5])
 		}
 		for _, category := range []string{"遥信", "遥测", "遥控", "遥调"} {
-			if strings.Count(plain[4], category) != 1 || strings.Contains(plain[5], category) {
-				t.Fatal("category must appear once in the table title", plain[4], plain[5])
+			if strings.Count(plain[5], category) != 1 || strings.Contains(plain[6], category) {
+				t.Fatal("category must appear once in the table title", plain[5], plain[6])
 			}
 		}
 		if !strings.Contains(raw, active+" 4:点位 ") || !strings.Contains(raw, active+" 遥测 ") {
@@ -132,6 +151,108 @@ func TestCurrentPageAndCategoryUseColorWithoutBrackets(t *testing.T) {
 		}
 		if strings.Contains(raw, "回车") || strings.Contains(raw, "[d]") || strings.Contains(raw, "j/k") {
 			t.Fatal(raw)
+		}
+	}
+}
+
+func TestPagingUsesVisibleRowsAndKeepsSelectionInView(t *testing.T) {
+	m := compactTableModel()
+	m.view = 6
+	for i := 2; i <= 80; i++ {
+		m.logs = append(m.logs, observe.Log{Sequence: uint64(i), Level: "INFO", Message: "running"})
+	}
+	m.render(80, 12)
+	m.key("pagedown")
+	if m.cursor != 3 {
+		t.Fatal("small table skipped visible rows", m.cursor)
+	}
+	m.render(80, 12)
+	first := m.listStart
+	if first != 3 {
+		t.Fatal("PageDown did not advance the viewport", first)
+	}
+	m.key("down")
+	m.key("up")
+	m.render(80, 12)
+	if m.listStart != first {
+		t.Fatal("viewport shifted while the selection was visible", m.listStart)
+	}
+	m.render(110, 24)
+	m.key("pagedown")
+	if m.cursor != 18 {
+		t.Fatal("page size did not follow the terminal resize", m.cursor)
+	}
+	m.key("?")
+	m.render(80, 12)
+	m.key("pagedown")
+	if m.detailScroll != 4 {
+		t.Fatal("help skipped content in a short terminal", m.detailScroll)
+	}
+}
+
+func TestPointPageAndFilterClearPreviousActionTargets(t *testing.T) {
+	m := compactTableModel()
+	m.view = 3
+	m.detail.View.PointMatches = 101
+	m.cursor = 99
+	m.key("pagedown")
+	if m.pointOffset != 100 || !m.pointLoading || len(m.rows()) != 0 {
+		t.Fatal("old points were still actionable after paging")
+	}
+	m.key("/")
+	m.input = "不存在"
+	m.key("enter")
+	if m.pointOffset != 0 || !m.pointLoading || m.emptyMessage() != "正在读取点位…" {
+		t.Fatal("point search did not request a fresh page")
+	}
+	m.pointLoading = false
+	if !strings.Contains(m.emptyMessage(), "没有匹配结果") {
+		t.Fatal("zero search results show the wrong empty state")
+	}
+}
+
+func TestPointTransferShortcutsMatchCapabilitiesAtMinimumWidth(t *testing.T) {
+	m := editableModel()
+	m.detail.ToolOperations = true
+	hints := m.actionHints(149)
+	if !strings.Contains(hints, "[m]导入 [o]导出") || strings.Index(hints, "[o]导出") > strings.Index(hints, "[↑↓]选择") {
+		t.Fatal("point transfer should be grouped before navigation", hints)
+	}
+	for _, capable := range []bool{true, false} {
+		m.detail.ToolOperations = capable
+		lines := strings.Split(stripStyles(m.render(60, 12)), "\r\n")
+		if !strings.Contains(lines[4], "[o]导出") || strings.Contains(lines[4], "[m]导入") != capable {
+			t.Fatal(lines[4])
+		}
+		m.key("i")
+		if !m.detailOpen || m.configurationEditor != nil {
+			t.Fatal("detail shortcut opened point transfer")
+		}
+		m.key("esc")
+
+		m.key("M")
+		if (m.configurationEditor != nil) != capable {
+			t.Fatal("import key and hint disagree")
+		}
+		if capable {
+			m.key("esc")
+		}
+		m.key("O")
+		if m.configurationEditor == nil || m.configurationEditor.title != "导出点表" {
+			t.Fatal("export key did not open form")
+		}
+		m.key("esc")
+	}
+}
+
+func TestPagingHintAppearsOnceOnlyWhenTheListOverflows(t *testing.T) {
+	m := editableModel()
+	for i := 11; i <= 13; i++ {
+		m.detail.View.Points = append(m.detail.View.Points, core.Point{Kind: "yc", Address: uint32(i)})
+	}
+	for _, size := range [][3]int{{60, 12, 1}, {150, 12, 1}, {60, 13, 0}} {
+		if screen := stripStyles(m.render(size[0], size[1])); strings.Count(screen, "[PgUp/PgDn]") != size[2] {
+			t.Fatal(size, screen)
 		}
 	}
 }
@@ -158,7 +279,7 @@ func TestAllViewHeadersAlignWithFirstDataColumn(t *testing.T) {
 					break
 				}
 			}
-			cols, indices := m.columns(width - 5 - m.numberWidth(len(m.rows())))
+			cols, indices := m.columns(width-5-m.numberWidth(len(m.rows())), m.rows())
 			header := cols[indices[0]].title
 			value := m.rows()[0].cells[indices[0]]
 			r, _ := utf8.DecodeRuneInString(value)
@@ -239,7 +360,7 @@ func TestAllTableColumnsAlignAndDoNotWasteSpaceWhenContentFits(t *testing.T) {
 			lines := strings.Split(stripStyles(m.render(width, 24)), "\r\n")
 			top := m.tableTop()
 			header, data := lines[top+1], lines[top+2]
-			cols, indices := m.columns(width - 5 - m.numberWidth(len(m.rows())))
+			cols, indices := m.columns(width-5-m.numberWidth(len(m.rows())), m.rows())
 			cells := m.rows()[0].cells
 			natural := 0
 			gap := tableGap(width - 5 - m.numberWidth(len(m.rows())))
@@ -354,11 +475,11 @@ func TestUnlabelledNumbersReplaceCountsWithoutChangingResourceIdentity(t *testin
 		for _, width := range []int{60, 80, 110, 150} {
 			lines := strings.Split(stripStyles(m.render(width, 24)), "\r\n")
 			for _, retired := range []string{"通道数", "连接数", "接收量", "发送量", "点位数", "执行次数", "序号"} {
-				if strings.Contains(lines[5], retired) {
-					t.Fatal("statistic or numbered-column heading remains", view, retired, lines[5])
+				if strings.Contains(lines[6], retired) {
+					t.Fatal("statistic or numbered-column heading remains", view, retired, lines[6])
 				}
 			}
-			if strings.ContainsAny(lines[4]+lines[len(lines)-3], "0123456789") || !strings.HasPrefix(lines[6], "│› 1  ") || !strings.HasPrefix(lines[5], "│     ") {
+			if strings.ContainsAny(lines[5]+lines[len(lines)-2], "0123456789") || !strings.HasPrefix(lines[7], "│› 1  ") || !strings.HasPrefix(lines[6], "│     ") {
 				t.Fatal("number must only be in the blank-headed first column", view, width, lines)
 			}
 		}
@@ -366,7 +487,7 @@ func TestUnlabelledNumbersReplaceCountsWithoutChangingResourceIdentity(t *testin
 	m.view, m.pointOffset, m.cursor = 3, 100, 1
 	m.detail.View.Points = []core.Point{{Kind: "yc", Address: 16385, Name: "甲"}, {Kind: "yc", Address: 16386, Name: "乙"}}
 	lines := strings.Split(stripStyles(m.render(80, 12)), "\r\n")
-	if !strings.HasPrefix(lines[6], "│  101 ") || !strings.HasPrefix(lines[7], "│› 102 ") {
+	if !strings.HasPrefix(lines[7], "│  101 ") || !strings.HasPrefix(lines[8], "│› 102 ") {
 		t.Fatal("point numbering must continue across pages", lines)
 	}
 	point, ok := m.selectedPoint()
@@ -376,7 +497,71 @@ func TestUnlabelledNumbersReplaceCountsWithoutChangingResourceIdentity(t *testin
 	m.view, m.cursor, m.filter = 4, 0, "停用"
 	m.detail.View.Rules.Config.Rules = append(m.detail.View.Rules.Config.Rules, core.AutoDataRule{Kind: "yc", Enabled: false, Points: "16386"})
 	lines = strings.Split(stripStyles(m.render(80, 12)), "\r\n")
-	if m.rows()[0].id != "1" || !strings.HasPrefix(lines[6], "│› 1  ") {
+	if m.rows()[0].id != "1" || !strings.HasPrefix(lines[7], "│› 1  ") {
 		t.Fatal("filtered rule must renumber visually and retain its actual identity", lines)
+	}
+}
+
+func TestFullFrameAtMinimumTerminalSize(t *testing.T) {
+	m := compactTableModel()
+	m.view = 5
+	payload := strings.Repeat("0123456789ABCDEF", 32) + "ABCD"
+	m.messages[0].Hex = payload
+	screen := stripStyles(m.render(60, 12))
+	if !strings.Contains(screen, "[Enter]详情") {
+		t.Fatal(screen)
+	}
+	if !strings.Contains(screen, "[PgUp/PgDn]翻页") {
+		t.Fatal("a single long frame must be pageable", screen)
+	}
+	var visibleHex strings.Builder
+	for next := 1; next < len(m.frameRows); {
+		lines := strings.Split(screen, "\r\n")
+		for i := m.frameTop; i < min(len(m.frameRows), m.frameTop+m.tableRows(12)); i++ {
+			if i != next {
+				continue
+			}
+			line := lines[m.tableTop()+2+i-m.frameTop]
+			visibleHex.WriteString(strings.TrimSpace(strings.Trim(line, "│")))
+			next++
+		}
+		if next == len(m.frameRows) {
+			break
+		}
+		top := m.frameTop
+		m.key("pagedown")
+		screen = stripStyles(m.render(60, 12))
+		if m.frameTop <= top {
+			t.Fatal("paging stalled within a long frame")
+		}
+	}
+	if visibleHex.String() != payload {
+		t.Fatalf("wrapped list lost or changed bytes: %s", visibleHex.String())
+	}
+	if !strings.Contains(screen, "[c]复制报文") {
+		t.Fatal(screen)
+	}
+	m.key("c")
+	if m.pendingClipboard != payload {
+		t.Fatal("copy must use the full selected frame, including bytes off screen")
+	}
+	m.key("enter")
+	var hexText strings.Builder
+	for _, line := range m.detailLines[1:] {
+		if line == "" {
+			break
+		}
+		_, bytes, _ := strings.Cut(line, "  ")
+		hexText.WriteString(strings.ReplaceAll(bytes, " ", ""))
+		if len(line) > 49 {
+			t.Fatalf("hex line too wide: %q", line)
+		}
+	}
+	if hexText.String() != payload {
+		t.Fatal("frame payload lost or changed")
+	}
+	screen = stripStyles(m.render(60, 12))
+	if !strings.Contains(screen, "0000  01 23") {
+		t.Fatal(screen)
 	}
 }

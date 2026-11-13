@@ -13,33 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gytest-go/internal/attribution"
 	"gytest-go/internal/core"
 )
-
-const usage = `prs — protocol-simulator server
-Usage:
-  prs tui [--runtime-dir DIR]
-  prs project new PROJECT [--name NAME] [--start]
-  prs project edit --pid PID|--file PROJECT --set name=NAME
-  prs project delete --pid PID
-  prs channel add|edit|delete|start|stop --pid PID [--channel ID] [--set FIELD=VALUE]
-  prs device add|edit|delete --pid PID --channel ID [--device ID] [--set FIELD=VALUE]
-  prs point add|edit|delete --pid PID --channel ID --device ID --kind TYPE --address N [--set FIELD=VALUE]
-  prs rule add|edit|delete --pid PID --channel ID --device ID [--index N] [--set FIELD=VALUE]
-  Channel/device/point/rule add/edit/delete also accepts --file PROJECT for offline edits.
-  prs point set|report --pid PID --channel ID --device ID --kind TYPE --address N [--value N] [--quality N] [--json]
-  prs version
-  prs ports [--json]
-  prs validate PROJECT [--json]
-  prs run PROJECT [--channels all|ID,ID] [--start-data-rules] [--log-format text|json]
-                 [--frames FILE --frames-max-mb 10 --frames-files 3] [--watch=false] [--runtime-dir DIR]
-
-run explicitly starts the selected channels. Automatic control/setpoint jobs are
-never started. Explicit configuration edits and point set save to JSON; generated values never
-write back. point set --runtime-only changes live values only. Run ./bin/prs from the
-extracted package, or prs after adding its bin directory to PATH.
-`
 
 type options struct {
 	project, channels, format, frames, runtimeDir string
@@ -54,59 +29,74 @@ func projectArguments(args []string) (string, []string) {
 	return "", args
 }
 func Execute(ctx context.Context, args []string, out, stderr io.Writer, version string) int {
-	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || len(args) == 1 && args[0] == "help" {
 		fmt.Fprint(out, usage)
-		fmt.Fprintln(out, attribution.Label())
 		return 0
 	}
 	fail := func(code int, err error) int { fmt.Fprintln(stderr, err); return code }
+	if args[0] == "help" {
+		if len(args) > 3 || isHelp(args[1]) || len(args) == 3 && !supportsAction(args[1], args[2]) {
+			return fail(2, errors.New("帮助用法：prs help <命令> [操作]"))
+		}
+		args = append(append([]string{}, args[1:]...), "--help")
+	}
 	switch args[0] {
 	case "project", "channel", "device", "rule":
 		return configurationCommand(ctx, args[0], args[1:], out, stderr)
 	case "point":
-		if len(args) > 1 && (args[1] == "add" || args[1] == "edit") {
+		if len(args) == 1 || len(args) == 2 && isHelp(args[1]) {
+			printResourceHelp(out, "point")
+			return 0
+		}
+		if len(args) > 1 && (args[1] == "add" || args[1] == "edit" || args[1] == "delete") {
 			return configurationCommand(ctx, "point", args[1:], out, stderr)
 		}
 		return pointCommand(ctx, args[1:], out, stderr)
+	case "inspect":
+		return inspectCommand(ctx, args[1:], out, stderr)
+	case "master":
+		return masterCommand(ctx, args[1:], out, stderr)
 	case "tui":
 		fs := flag.NewFlagSet("tui", flag.ContinueOnError)
-		fs.SetOutput(stderr)
-		dir := fs.String("runtime-dir", observe.RuntimeDir(), "project socket directory")
-		if err := fs.Parse(args[1:]); err != nil {
+		dir := fs.String("runtime-dir", observe.RuntimeDir(), "工程观测套接字所在`目录`")
+		if err := parseFlags(fs, args[1:], out, stderr, "prs "+args[0]+" [选项]"); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
 				return 0
 			}
 			return 2
 		}
 		if fs.NArg() != 0 {
-			return fail(2, errors.New("tui connects to running projects; it does not accept a project file"))
+			return fail(2, errors.New("tui 用于查看运行中的工程，请直接执行 prs tui"))
 		}
 		terminal, ok := out.(*os.File)
 		if !ok {
-			return fail(1, errors.New("prs tui requires terminal output"))
+			return fail(1, errors.New("prs tui 需要在终端中运行"))
 		}
 		if err := tui.Run(ctx, os.Stdin, terminal, *dir); err != nil {
 			return fail(1, err)
 		}
 		return 0
 	case "version", "--version":
+		if len(args) == 2 && args[0] == "version" && isHelp(args[1]) {
+			fmt.Fprintln(out, "用法\n  prs version\n\n显示 prs 版本。")
+			return 0
+		}
 		if len(args) != 1 {
-			return fail(2, errors.New("version accepts no arguments"))
+			return fail(2, errors.New("version 无需参数"))
 		}
 		fmt.Fprintf(out, "prs %s\n", version)
 		return 0
 	case "ports":
 		fs := flag.NewFlagSet("ports", flag.ContinueOnError)
-		fs.SetOutput(stderr)
-		asJSON := fs.Bool("json", false, "JSON output")
-		if err := fs.Parse(args[1:]); err != nil {
+		asJSON := fs.Bool("json", false, "以 JSON 格式输出")
+		if err := parseFlags(fs, args[1:], out, stderr, "prs "+args[0]+" [选项]"); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
 				return 0
 			}
 			return 2
 		}
 		if fs.NArg() != 0 {
-			return fail(2, errors.New("ports accepts no positional arguments"))
+			return fail(2, errors.New("ports 无需位置参数"))
 		}
 		ports, err := core.SerialPorts()
 		if err != nil {
@@ -128,23 +118,22 @@ func Execute(ctx context.Context, args []string, out, stderr io.Writer, version 
 	case "run", "validate":
 		project, rest := projectArguments(args[1:])
 		fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
-		fs.SetOutput(stderr)
 		opt := options{project: project}
-		fs.StringVar(&opt.project, "project", project, "project JSON path")
+		fs.StringVar(&opt.project, "project", project, "工程 JSON `文件`路径")
 		asJSON := false
 		if args[0] == "validate" {
-			fs.BoolVar(&asJSON, "json", false, "JSON output")
+			fs.BoolVar(&asJSON, "json", false, "以 JSON 格式输出")
 		} else {
-			fs.StringVar(&opt.runtimeDir, "runtime-dir", observe.RuntimeDir(), "local observation socket directory")
-			fs.BoolVar(&opt.watch, "watch", true, "automatically reload validated project changes")
-			fs.StringVar(&opt.channels, "channels", "all", "comma-separated channel IDs or all")
-			fs.BoolVar(&opt.startData, "start-data-rules", false, "start saved data rules; IEC104 waits for link activation")
-			fs.StringVar(&opt.format, "log-format", "text", "text or json")
-			fs.StringVar(&opt.frames, "frames", "", "optional rotating JSONL frame log")
-			fs.IntVar(&opt.frameMB, "frames-max-mb", 10, "maximum MiB per frame log file")
-			fs.IntVar(&opt.frameFiles, "frames-files", 3, "total frame log files (1..10)")
+			fs.StringVar(&opt.runtimeDir, "runtime-dir", observe.RuntimeDir(), "工程观测套接字所在`目录`")
+			fs.BoolVar(&opt.watch, "watch", true, "校验并自动加载配置变更，可用 --watch=false 关闭")
+			fs.StringVar(&opt.channels, "channels", "all", "选择通道，可填 all、none 或逗号分隔的`标识`")
+			fs.BoolVar(&opt.startData, "start-data-rules", false, "启动已启用的自动上报规则，IEC104 等待链路激活")
+			fs.StringVar(&opt.format, "log-format", "text", "运行日志`格式`，可填 text 或 json")
+			fs.StringVar(&opt.frames, "frames", "", "将收发报文写入可轮转的 JSONL `文件`")
+			fs.IntVar(&opt.frameMB, "frames-max-mb", 10, "单个报文日志的大小`上限`，单位为 MiB")
+			fs.IntVar(&opt.frameFiles, "frames-files", 3, "保留报文日志的文件`数量`，范围为 1–10")
 		}
-		if err := fs.Parse(rest); err != nil {
+		if err := parseFlags(fs, rest, out, stderr, "prs "+args[0]+" (<工程文件> | --project <工程文件>) [选项]"); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
 				return 0
 			}
@@ -157,15 +146,15 @@ func Execute(ctx context.Context, args []string, out, stderr io.Writer, version 
 			}
 		})
 		if duplicateProject {
-			return fail(2, errors.New("project path was provided twice"))
+			return fail(2, errors.New("工程文件路径重复，请只指定一次"))
 		}
 		if opt.project == "" && fs.NArg() == 1 {
 			opt.project = fs.Arg(0)
 		} else if fs.NArg() != 0 {
-			return fail(2, errors.New("provide exactly one project path; place flags before a trailing path"))
+			return fail(2, errors.New("请指定一个工程文件，或使用 --project 指定路径"))
 		}
 		if opt.project == "" {
-			return fail(2, errors.New("project path is required"))
+			return fail(2, errors.New("请指定工程文件路径"))
 		}
 		absolute, absErr := filepath.Abs(opt.project)
 		if absErr != nil {
@@ -173,7 +162,7 @@ func Execute(ctx context.Context, args []string, out, stderr io.Writer, version 
 		}
 		opt.project = absolute
 		if args[0] == "run" && (opt.format != "text" && opt.format != "json" || opt.frameMB < 1 || opt.frameMB > 1024 || opt.frameFiles < 1 || opt.frameFiles > 10) {
-			return fail(2, errors.New("invalid log format or frame limits"))
+			return fail(2, errors.New("日志格式或报文日志限制无效"))
 		}
 		projectInfo, err := core.ReadProject(opt.project)
 		if err != nil {
@@ -189,7 +178,7 @@ func Execute(ctx context.Context, args []string, out, stderr io.Writer, version 
 					return fail(1, err)
 				}
 			} else {
-				fmt.Fprintf(out, "Valid: %s (%d channels)\n", projectInfo.Name, len(projectInfo.Channels))
+				fmt.Fprintf(out, "校验通过：%s（%d 个通道）\n", projectInfo.Name, len(projectInfo.Channels))
 			}
 			return 0
 		}
@@ -215,7 +204,7 @@ func Execute(ctx context.Context, args []string, out, stderr io.Writer, version 
 		}
 		return 0
 	default:
-		return fail(2, fmt.Errorf("unknown command %q; use prs help", args[0]))
+		return fail(2, fmt.Errorf("未知命令 %q，请运行 prs --help 查看指令集", args[0]))
 	}
 }
 func selectChannels(channels []core.Channel, selection string) ([]core.Channel, error) {

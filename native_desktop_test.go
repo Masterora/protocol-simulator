@@ -33,7 +33,7 @@ func rawArgs(values ...any) []json.RawMessage {
 
 func TestNativeEditorSharesParentEngine(t *testing.T) {
 	a, remote := editorFixture(t)
-	raw, err := remote.call("UpsertChannel", rawArgs(core.Channel{Name: "shared", Protocol: "raw", Role: "client", Transport: "tcp-client", Address: "127.0.0.1:2404"}))
+	raw, err := remote.call("UpsertChannel", rawArgs(core.Channel{Name: "shared", Protocol: "modbus-tcp", Devices: []core.Device{}, Role: "client", Transport: "tcp-client", Address: "127.0.0.1:2404"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +386,7 @@ func TestNativeAutomaticJobPersistsAcrossWindowReopenAndStopsViaIPC(t *testing.T
 // every method name. The manager never needs arbitrary window-opening access.
 func TestNativeManagerInlineEditsReachParentWithoutOpeningEditor(t *testing.T) {
 	a, remote := editorFixture(t)
-	id, err := a.engine.UpsertChannel(core.Channel{Name: "manager", Protocol: "raw", Role: "server", Transport: "tcp-server", Address: "127.0.0.1:0"})
+	id, err := a.engine.UpsertChannel(core.Channel{Name: "manager", Protocol: "modbus-tcp", Devices: []core.Device{}, Role: "server", Transport: "tcp-server", Address: "127.0.0.1:0"})
 	if err != nil {
 		t.Fatal(err)
 	}

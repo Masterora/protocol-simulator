@@ -80,9 +80,6 @@ func (e *Engine) UpsertDevice(channelID, protocol string, d Device, replace bool
 			c.Devices = []Device{}
 
 		}
-		if protocol == "raw" {
-			return "", errors.New("请为装置选择规约")
-		}
 		d.Name = strings.TrimSpace(d.Name)
 		d.Configuration = cloneConfiguration(d.Configuration)
 		d.AutoData = cloneAutoData(d.AutoData)
@@ -196,9 +193,6 @@ func (e *Engine) deleteDevice(channelID, deviceID string, disconnect bool) error
 					e.mu.Lock()
 				}
 				c.Devices = append(c.Devices[:j], c.Devices[j+1:]...)
-				if last {
-					c.Protocol = "raw"
-				}
 				c.syncLegacy()
 				e.dirty = true
 				e.markConfigurationLocked()

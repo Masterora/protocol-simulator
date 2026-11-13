@@ -33,10 +33,12 @@ func shortcutHints(width int, hints ...shortcutHint) string {
 	return out.String()
 }
 
+const shortcutDescriptionColor = "\x1b[38;5;158m"
+
 func paintShortcuts(text string, width int) string {
 	text = fit(text, width)
 	var out strings.Builder
-	out.WriteString(white)
+	out.WriteString(shortcutDescriptionColor)
 	for {
 		start := strings.IndexByte(text, '[')
 		if start < 0 {
@@ -50,7 +52,7 @@ func paintShortcuts(text string, width int) string {
 		out.WriteString(text[:start])
 		out.WriteString(yellow)
 		out.WriteString(text[start:end])
-		out.WriteString(white)
+		out.WriteString(shortcutDescriptionColor)
 		text = text[end:]
 	}
 	out.WriteString(text)
@@ -58,42 +60,7 @@ func paintShortcuts(text string, width int) string {
 	return out.String()
 }
 
-func (m *model) globalHints(width int) string {
-	if m.operationBusy || m.deleting != nil || m.picker != nil || m.configurationEditor != nil || m.editor != nil || m.mode != "" {
-		return " [Ctrl+C]退出界面"
-	}
-	if m.help {
-		return " [?]返回 [q]退出"
-	}
-	hints := []shortcutHint{}
-	if !m.detailOpen {
-		if width >= 100 {
-			hints = append(hints, shortcutHint{"[Tab]切页", 1})
-		}
-		hints = append(hints, shortcutHint{"[/]筛选", 0})
-	}
-	if !m.detailOpen {
-		hints = append(hints, shortcutHint{"[?]帮助", 0})
-	}
-	hints = append(hints, shortcutHint{"[q]退出", 0})
-	return shortcutHints(width-18, hints...)
-}
-
-func (m *model) shortcutHeader(left string, width int) string {
-	hints := m.globalHints(width)
-	leftWidth := width - uniseg.StringWidth(hints)
-	if index := strings.LastIndex(left, " · "); index >= 0 {
-		suffix := left[index:]
-		left = clipped(left[:index], leftWidth-uniseg.StringWidth(suffix), false) + suffix
-	} else {
-		left = clipped(left, leftWidth, false)
-	}
-	return painted(left, leftWidth, white) + paintShortcuts(hints, uniseg.StringWidth(hints))
-}
-
-// Configuration hints reflect the selected process's capabilities, including
-// legacy observers and an empty or disconnected resource view.
-func (m *model) configurationHints() (add, edit bool) {
+func (m *model) configurationActions() (add, edit bool) {
 	if m.view < 0 || m.view > 4 {
 		return
 	}
@@ -117,36 +84,75 @@ func (m *model) configurationHints() (add, edit bool) {
 	if m.view >= 3 {
 		add = add && m.device != ""
 	}
-	return add, add && len(rows) > 0
+	edit = add && len(rows) > 0
+	if add && m.view == 2 {
+		for _, c := range m.detail.View.Channels {
+			if c.ID == m.channel {
+				add = c.Protocol != "iec104" || c.Devices == 0
+				break
+			}
+		}
+	}
+	return add, edit
 }
 
-// The footer belongs to the focused view or dialog. Global actions stay above.
+func (m *model) canFollow() bool {
+	return m.view >= 5 && !m.follow && len(m.rows()) > 0
+}
+
+func (m *model) listCanPage() bool {
+	count := len(m.rows())
+	if m.view == 5 {
+		count = max(count, len(m.frameRows))
+	}
+	if m.view == 3 {
+		count = m.pointRowCount()
+	}
+	return count > m.tableRows(m.terminalHeight)
+}
+
+// Show the shortcuts for the current input focus.
 func (m *model) actionHints(width int) string {
 	canEdit, canReport := m.pointOperationsAvailable()
 	switch {
 	case m.operationBusy:
-		return " 正在提交…"
+		return " 正在提交… [Ctrl+C]退出界面"
 	case m.deleting != nil:
-		choice := "取消"
-		if m.deleting.confirm {
-			choice = "永久删除"
-		}
-		return shortcutHints(width, shortcutHint{"[" + choice + "]", 0}, shortcutHint{"[←→/Tab]切换", 1}, shortcutHint{"[Enter]确认", 0}, shortcutHint{"[Esc]取消", 0})
+		return shortcutHints(width, shortcutHint{"[Enter]确认", 0}, shortcutHint{"[Esc]取消", 0}, shortcutHint{"[←→]选择", 1})
 	case m.picker != nil:
-		return shortcutHints(width, shortcutHint{"[↑↓]选择", 1}, shortcutHint{"[PgUp/PgDn]翻页", 2}, shortcutHint{"[Enter]确认", 0}, shortcutHint{"[Esc]取消", 0})
+		return shortcutHints(width, shortcutHint{"[Enter]确认", 0}, shortcutHint{"[Esc]取消", 0}, shortcutHint{"[↑↓]选择", 1}, shortcutHint{"[PgUp/PgDn]翻页", 2}, shortcutHint{"[Home/End]首尾", 2})
 	case m.configurationEditor != nil:
-		hints := []shortcutHint{{"[Tab/↑↓]字段", 1}}
-		if len(m.configurationEditor.fieldChoices(m.configurationEditor.focus)) > 0 {
-			hints = append(hints, shortcutHint{"[←→]切换", 2}, shortcutHint{"[空格]选项", 1})
+		label := m.configurationEditor.submitLabel
+		if label == "" {
+			label = "保存"
 		}
-		hints = append(hints, shortcutHint{"[Enter]保存", 0}, shortcutHint{"[Esc]取消", 0})
+		hints := []shortcutHint{{"[Enter]" + label, 0}, {"[Esc]取消", 0}, {"[Tab/Shift+Tab]字段", 1}}
+		if m.configurationEditor.initialTable > 0 {
+			hints = append(hints, shortcutHint{"[↑↓]选行", 2})
+		}
+		if len(m.configurationEditor.fieldChoices(m.configurationEditor.focus)) > 0 {
+			hints = append(hints, shortcutHint{"[空格]选项", 1})
+		}
+		if m.configurationEditor.acceptsText(m.configurationEditor.focus) {
+			hints = append(hints, shortcutHint{"[←→]光标", 1}, shortcutHint{"[Ctrl+U]清空", 2})
+		} else {
+			hints = append(hints, shortcutHint{"[←→]切换", 2})
+		}
+		hints = append(hints, shortcutHint{"[PgUp/PgDn]翻页", 3})
 		return shortcutHints(width, hints...)
+	case m.pointPreview != nil:
+		return shortcutHints(width, shortcutHint{"[Enter]导入", 0}, shortcutHint{"[Esc]取消", 0})
 	case m.editor != nil:
-		return shortcutHints(width, shortcutHint{"[Tab/↑↓]字段", 1}, shortcutHint{"[←→]切换", 2}, shortcutHint{"[空格]选项", 1}, shortcutHint{"[Enter]保存", 0}, shortcutHint{"[Esc]取消", 0})
-	case m.mode != "":
-		return shortcutHints(width, shortcutHint{"[Enter]确认", 0}, shortcutHint{"[Esc]取消", 0}, shortcutHint{"[Ctrl+U]清空", 1})
+		hints := []shortcutHint{{"[Enter]保存", 0}, {"[Esc]取消", 0}, {"[Tab/Shift+Tab]字段", 1}, {"[←→]光标", 1}}
+		if len(m.manualChoices(m.editor.focus)) > 0 {
+			hints = append(hints, shortcutHint{"[空格]选项", 1})
+		}
+		hints = append(hints, shortcutHint{"[Ctrl+U]清空", 2})
+		return shortcutHints(width, hints...)
+	case m.searching:
+		return shortcutHints(width, shortcutHint{"[Enter]筛选", 0}, shortcutHint{"[Esc]取消", 0}, shortcutHint{"[←→]光标", 1}, shortcutHint{"[Ctrl+U]清空", 2})
 	case m.help:
-		return shortcutHints(width, shortcutHint{"[↑↓]滚动", 1}, shortcutHint{"[PgUp/PgDn]翻页", 2}, shortcutHint{"[Home/End]首尾", 2}, shortcutHint{"[Esc]返回", 0})
+		return shortcutHints(width, shortcutHint{"[Esc]返回", 0}, shortcutHint{"[↑↓]滚动", 1}, shortcutHint{"[PgUp/PgDn]翻页", 2}, shortcutHint{"[Home/End]首尾", 2})
 	}
 	if m.detailOpen {
 		hints := []shortcutHint{{"[Enter/Esc]返回", 0}}
@@ -154,7 +160,7 @@ func (m *model) actionHints(width int) string {
 			hints = append(hints, shortcutHint{"[v]改值", 0})
 		}
 		if canReport {
-			hints = append(hints, shortcutHint{"[s]上报", 0})
+			hints = append(hints, shortcutHint{m.reportShortcut(), 0})
 		}
 		hints = append(hints, shortcutHint{"[↑↓]滚动", 1}, shortcutHint{"[PgUp/PgDn]翻页", 3}, shortcutHint{"[Home/End]首尾", 2})
 		return shortcutHints(width, hints...)
@@ -171,12 +177,10 @@ func (m *model) actionHints(width int) string {
 			hints = append(hints, shortcutHint{"[i]详情", 2})
 		}
 	}
-	if m.canControlRules() {
-		index, _ := m.selectedRule()
-		_, label := ruleControlAction(ruleStatus(m.detail.View.Rules, index))
-		hints = append(hints, shortcutHint{"[r]" + label, 0})
+	if m.view == 5 && hasRows {
+		hints = append(hints, shortcutHint{"[c]复制报文", 0})
 	}
-	add, edit := m.configurationHints()
+	add, edit := m.configurationActions()
 	if add {
 		label := "新增"
 		if m.view == 0 {
@@ -187,14 +191,11 @@ func (m *model) actionHints(width int) string {
 	if edit {
 		hints = append(hints, shortcutHint{"[e]编辑", 0})
 	}
-	if m.canDelete() {
-		hints = append(hints, shortcutHint{"[x]删除", 0})
-	}
 	if canEdit {
-		hints = append(hints, shortcutHint{"[v]改值", 0})
+		hints = append(hints, shortcutHint{"[v]改值", 1})
 	}
 	if canReport {
-		hints = append(hints, shortcutHint{"[s]上报", 0})
+		hints = append(hints, shortcutHint{m.reportShortcut(), 1})
 	}
 	if m.view == 1 && edit {
 		label := "连接"
@@ -206,17 +207,39 @@ func (m *model) actionHints(width int) string {
 		}
 		hints = append(hints, shortcutHint{"[c]" + label, 0})
 	}
-	if m.view >= 5 && !m.follow {
-		hints = append(hints, shortcutHint{"[g]跟随", 0})
+	if m.canControlRules() {
+		index, _ := m.selectedRule()
+		_, label := ruleControlAction(ruleStatus(m.detail.View.Rules, index))
+		hints = append(hints, shortcutHint{"[r]" + label, 0})
 	}
-	if m.view == 3 {
-		hints = append(hints, shortcutHint{"[←→]分类", 0})
+	if m.canFollow() {
+		hints = append(hints, shortcutHint{"[g]跟随", 1})
+	}
+	if m.pointTransferAvailable() {
+		if m.detail.ToolOperations {
+			hints = append(hints, shortcutHint{"[m]导入", 0})
+		}
+		hints = append(hints, shortcutHint{"[o]导出", 0})
+	}
+	if m.canDelete() {
+		hints = append(hints, shortcutHint{"[x]删除", 0})
+	}
+	if m.view == 3 && len(m.pointKinds()) > 1 {
+		hints = append(hints, shortcutHint{"[←→]分类", 1})
 	}
 	if hasRows {
-		hints = append(hints, shortcutHint{"[↑↓]选择", 2}, shortcutHint{"[PgUp/PgDn]翻页", 3})
+		hints = append(hints, shortcutHint{"[↑↓]选择", 2})
+		if m.listCanPage() {
+			hints = append(hints, shortcutHint{"[PgUp/PgDn]翻页", 0}, shortcutHint{"[Home/End]首尾", 3})
+		}
 	}
-	if m.view != 0 || m.filter != "" {
+	hints = append(hints, shortcutHint{"[/]筛选", 2}, shortcutHint{"[Tab]切页", 3})
+	if m.filter != "" {
+		hints = append(hints, shortcutHint{"[Esc]清筛选", 2})
+	} else if m.view != 0 {
 		hints = append(hints, shortcutHint{"[Esc]返回", 2})
 	}
-	return shortcutHints(width, hints...)
+	utilities := " [?]帮助 [q]退出"
+	actionWidth := max(0, width-uniseg.StringWidth(utilities))
+	return fit(shortcutHints(actionWidth, hints...), actionWidth) + utilities
 }

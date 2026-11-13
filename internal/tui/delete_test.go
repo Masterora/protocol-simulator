@@ -22,7 +22,7 @@ func TestDeleteConfirmationPinsTargetAndRevisionAndDefaultsToCancel(t *testing.T
 	}
 	for _, size := range [][2]int{{60, 12}, {90, 24}, {150, 30}} {
 		s := stripStyles(m.render(size[0], size[1]))
-		if !strings.Contains(s, "确认永久删除") || !strings.Contains(s, "取消") {
+		if !strings.Contains(s, "确认永久删除") || !strings.Contains(s, "› 取消      永久删除") || !strings.Contains(s, "不可恢复") {
 			t.Fatal(s)
 		}
 	}
@@ -31,8 +31,18 @@ func TestDeleteConfirmationPinsTargetAndRevisionAndDefaultsToCancel(t *testing.T
 		t.Fatal("default Enter deleted")
 	}
 	m.key("delete")
+	if m.deleting != nil {
+		t.Fatal("unlisted Delete shortcut opened confirmation")
+	}
+	m.key("x")
 	m.detail.ConfigurationRevision = "later"
 	m.detail.View.Points[0].Address = 99
+	for _, key := range []string{" ", "tab", "up"} {
+		m.key(key)
+		if m.deleting.confirm {
+			t.Fatal("unlisted key changed the confirmation", key)
+		}
+	}
 	m.key("right")
 	m.key("enter")
 	op := m.pendingConfiguration
@@ -41,7 +51,7 @@ func TestDeleteConfirmationPinsTargetAndRevisionAndDefaultsToCancel(t *testing.T
 	}
 }
 func TestCaseInsensitiveCommandsAndOriginalCaseText(t *testing.T) {
-	for _, letter := range []string{"n", "e", "v", "i", "x", "c", "p", "f", "l", "g", "q"} {
+	for _, letter := range []string{"n", "e", "v", "i", "x", "c", "g", "q"} {
 		low, high := deletableModel(), deletableModel()
 		if letter == "c" {
 			low.view, high.view = 1, 1

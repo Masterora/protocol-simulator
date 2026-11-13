@@ -43,7 +43,6 @@ func ruleControlAction(status string) (action, label string) {
 
 func (m *model) beginRuleControl() {
 	if !m.canControlRules() {
-		m.setOperationNotice("请选择规则；旧工程服务需升级后才能单独控制规则")
 		return
 	}
 	index, _ := m.selectedRule()

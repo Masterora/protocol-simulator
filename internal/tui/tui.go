@@ -3,6 +3,7 @@ package tui
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -21,8 +22,6 @@ import (
 	"gytest-go/internal/observe"
 	"gytest-go/internal/projectfile"
 )
-
-var viewNames = []string{"Projects", "Channels", "Devices", "Points", "Rules", "Frames", "Logs"}
 
 type instance struct {
 	socket string
@@ -53,36 +52,45 @@ type detailTarget struct {
 	ruleDuplicate               bool
 }
 type model struct {
-	pendingRule                 *ruleOperation
-	deleting                    *deleteConfirmation
-	picker                      *choicePicker
-	pickerLabels                []string
-	runtimeDir                  string
-	configurationEditor         *configurationEditor
-	pendingConfiguration        *configurationOperation
-	editor                      *pointEditor
-	pendingOperation            *manualOperation
-	operationBusy               bool
-	operationNotice             string
-	operationNoticeAt           time.Time
-	detailOpen                  bool
-	detailTarget                detailTarget
-	detailScroll                int
-	detailTitle                 string
-	detailLines                 []string
-	discovered                  bool
-	follow                      bool
-	connected                   bool
-	view, cursor, pointOffset   int
-	socket, channel, device     string
-	pointKind                   string
-	instances                   []instance
-	detail                      observe.Info
-	messages                    []core.Message
-	logs                        []observe.Log
-	after, logAfter             uint64
-	filter, input, mode, notice string
-	help                        bool
+	pointPreview              *pointTransferPreview
+	pendingRule               *ruleOperation
+	deleting                  *deleteConfirmation
+	picker                    *choicePicker
+	pickerLabels              []string
+	runtimeDir                string
+	configurationEditor       *configurationEditor
+	pendingConfiguration      *configurationOperation
+	editor                    *pointEditor
+	pendingOperation          *manualOperation
+	operationBusy             bool
+	operationNotice           string
+	operationNoticeAt         time.Time
+	detailOpen                bool
+	detailTarget              detailTarget
+	detailScroll              int
+	detailTitle               string
+	detailLines               []string
+	discovered                bool
+	follow                    bool
+	connected                 bool
+	view, cursor, pointOffset int
+	listStart, terminalHeight int
+	frameLine, frameTop       int
+	frameRows                 []int
+	pendingClipboard          string
+	socket, channel, device   string
+	pointKind                 string
+	pointTarget, pointStart   int
+	pointLoading              bool
+	instances                 []instance
+	detail                    observe.Info
+	messages                  []core.Message
+	logs                      []observe.Log
+	after, logAfter           uint64
+	filter, input, notice     string
+	searching                 bool
+	searchCaret               textCursor
+	help                      bool
 }
 
 func sanitize(text string) string {
@@ -100,6 +108,9 @@ func fit(text string, width int) string {
 	g := uniseg.NewGraphemes(text)
 	for g.Next() {
 		w := g.Width()
+		if g.Str() == inputCaret {
+			w = 0
+		}
 		if used+w > width {
 			break
 		}
@@ -150,6 +161,7 @@ func (m *model) bindProject(item instance) {
 	}
 }
 func (m *model) selectView(view int) {
+	resetPointQuery := m.pointOffset > 0 || (m.view == 3 && m.filter != "")
 	rows := m.rows()
 	if len(rows) > 0 {
 		id := rows[min(m.cursor, len(rows)-1)].id
@@ -186,9 +198,15 @@ func (m *model) selectView(view int) {
 		}
 	}
 	m.view, m.cursor, m.pointOffset = view, 0, 0
-	m.filter, m.mode = "", ""
+	m.listStart = 0
+	m.frameLine, m.frameTop = 0, 0
+	m.frameRows = nil
+	m.filter, m.searching = "", false
 	m.detailOpen, m.help = false, false
 	m.follow = view == 5 || view == 6
+	if resetPointQuery || (view == 3 && !m.connected && len(m.detail.View.Points) == 0) {
+		m.changePointPage(0)
+	}
 	if view == 0 {
 		for i, r := range m.rows() {
 			if r.id == m.socket {
@@ -229,46 +247,28 @@ func (m *model) key(key string) bool {
 		m.configurationKey(key)
 		return false
 	}
+	if m.pointPreview != nil {
+		m.pointTransferPreviewKey(key)
+		return false
+	}
 	if m.editor != nil {
 		m.editKey(key)
 		return false
 	}
-	if m.mode == "" {
+	if !m.searching {
 		key = strings.ToLower(key)
 	}
-	if m.mode == "" && !m.help && !m.detailOpen {
-		if key == "n" {
-			m.beginConfiguration("add")
-			return false
-		}
-		if key == "e" {
-			m.beginConfiguration("edit")
-			return false
-		}
-		if key == "x" || key == "delete" {
-			m.beginDelete()
-			return false
-		}
-		if key == "r" && m.view == 4 {
-			m.beginRuleControl()
-			return false
-		}
-		if key == "c" && m.view == 1 {
-			m.toggleChannel()
-			return false
-		}
-	}
-	if m.mode == "" && !m.help && m.view == 3 {
-		if key == "v" {
+	if !m.searching && !m.help && (key == "v" || key == "s") {
+		canEdit, canReport := m.pointOperationsAvailable()
+		if key == "v" && canEdit {
 			m.beginPointEdit()
-			return false
 		}
-		if key == "s" {
+		if key == "s" && canReport {
 			m.reportPoint()
-			return false
 		}
+		return false
 	}
-	if m.detailOpen && m.mode == "" {
+	if m.detailOpen {
 		switch key {
 		case "esc", "enter":
 			m.detailOpen = false
@@ -277,30 +277,9 @@ func (m *model) key(key string) bool {
 		case "up":
 			m.detailScroll = max(0, m.detailScroll-1)
 		case "pagedown":
-			m.detailScroll += 10
+			m.detailScroll += m.overlayRows(m.terminalHeight)
 		case "pageup":
-			m.detailScroll = max(0, m.detailScroll-10)
-		case "home":
-			m.detailScroll = 0
-		case "end":
-			m.detailScroll = len(m.detailLines)
-		case "q":
-			return true
-		}
-		return false
-	}
-	if m.help {
-		switch key {
-		case "esc", "?", "f1":
-			m.help = false
-		case "down":
-			m.detailScroll++
-		case "up":
-			m.detailScroll = max(0, m.detailScroll-1)
-		case "pagedown":
-			m.detailScroll += 10
-		case "pageup":
-			m.detailScroll = max(0, m.detailScroll-10)
+			m.detailScroll = max(0, m.detailScroll-m.overlayRows(m.terminalHeight))
 		case "home":
 			m.detailScroll = 0
 		case "end":
@@ -310,89 +289,110 @@ func (m *model) key(key string) bool {
 		}
 		return false
 	}
-	if m.mode != "" {
+	if m.help {
 		switch key {
 		case "esc":
-			m.mode = ""
+			m.help = false
+		case "down":
+			m.detailScroll++
+		case "up":
+			m.detailScroll = max(0, m.detailScroll-1)
+		case "pagedown":
+			m.detailScroll += m.overlayRows(m.terminalHeight)
+		case "pageup":
+			m.detailScroll = max(0, m.detailScroll-m.overlayRows(m.terminalHeight))
+		case "home":
+			m.detailScroll = 0
+		case "end":
+			m.detailScroll = 1 << 20
+		case "q":
+			return true
+		}
+		return false
+	}
+	if m.searching {
+		switch key {
+		case "esc":
+			m.searching = false
 			m.input = ""
 		case "enter":
-			if m.mode == "/" {
-				m.filter = m.input
-				m.cursor = 0
-				m.pointOffset = 0
-			} else {
-				command := strings.ToLower(strings.TrimSpace(m.input))
-				if command == "q" || command == "quit" || command == "退出" {
-					return true
-				}
-				found := false
-				for i, name := range viewNames {
-					if command == strings.ToLower(name) || commandAlias(command) == i {
-						m.selectView(i)
-						found = true
-						break
-					}
-				}
-				if !found {
-					m.notice = "未知视图：" + command
-				}
+			m.filter = m.input
+			m.cursor = 0
+			m.listStart = 0
+			m.frameLine, m.frameTop = 0, 0
+			m.frameRows = nil
+			m.follow = false
+			if m.view == 3 {
+				m.changePointPage(0)
 			}
-			m.mode = ""
-			m.input = ""
-		case "backspace":
-			runes := []rune(m.input)
-			if len(runes) > 0 {
-				m.input = string(runes[:len(runes)-1])
-			}
-		case "ctrl-u":
+			m.searching = false
 			m.input = ""
 		default:
-			r, _ := utf8.DecodeRuneInString(key)
-			if len(m.input)+len(key) <= 256 && utf8.RuneCountInString(key) == 1 && !unicode.IsControl(r) {
-				m.input += key
-			}
+			replace := false
+			m.searchCaret.key(&m.input, &replace, key, 256)
 		}
 		return false
 	}
 	switch key {
 	case "q":
 		return true
-	case "?", "f1":
-		m.help = !m.help
+	case "?":
+		m.help = true
 		m.detailScroll = 0
-	case "/", ":":
-		m.mode = key
+	case "/":
+		m.searching = true
 		m.input = ""
-	case "down":
-		m.follow = false
-		m.cursor++
-	case "up":
-		m.follow = false
-		m.cursor = max(0, m.cursor-1)
-	case "home":
-		m.follow = false
-		m.cursor = 0
-	case "end", "g":
-		m.follow = m.view == 5 || m.view == 6
-		m.cursor = max(0, len(m.rows())-1)
-	case "i":
-		if m.view < 3 {
-			m.openDetail()
+		m.searchCaret = textCursor{}
+	case "n", "e", "c":
+		if key == "c" && m.view == 5 {
+			rows := m.rows()
+			if m.cursor < len(rows) {
+				m.pendingClipboard = strings.Join(strings.Fields(rows[m.cursor].cells[frameHexColumn]), "")
+			}
+			break
 		}
-	case "f":
-		m.selectView(5)
-	case "l":
-		m.selectView(6)
+		add, edit := m.configurationActions()
+		switch {
+		case key == "n" && add:
+			m.beginConfiguration("add")
+		case key == "e" && edit:
+			m.beginConfiguration("edit")
+		case key == "c" && m.view == 1 && edit:
+			m.toggleChannel()
+		}
+	case "x":
+		m.beginDelete()
+	case "r":
+		m.beginRuleControl()
+	case "down", "up", "home", "end", "pageup", "pagedown":
+		m.moveListCursor(key)
+	case "g":
+		if m.canFollow() {
+			m.follow = true
+			m.cursor = len(m.rows()) - 1
+		}
+	case "i":
+		m.openDetail()
+	case "m":
+		if m.pointTransferAvailable() && m.detail.ToolOperations {
+			m.beginPointTransfer(false)
+		}
+	case "o":
+		if m.pointTransferAvailable() {
+			m.beginPointTransfer(true)
+		}
 	case "enter":
 		m.enter()
 	case "shift-tab":
-		m.selectView((m.view + len(viewNames) - 1) % len(viewNames))
+		m.selectView((m.view + len(viewLabels) - 1) % len(viewLabels))
 	case "tab":
-		m.selectView((m.view + 1) % len(viewNames))
+		m.selectView((m.view + 1) % len(viewLabels))
 	case "esc":
 		if m.filter != "" {
 			m.filter = ""
-			m.pointOffset = 0
+			if m.view == 3 {
+				m.changePointPage(0)
+			}
 		} else {
 			switch m.view {
 			case 0: // The project overview is the root of the navigation tree.
@@ -408,24 +408,6 @@ func (m *model) key(key string) bool {
 		m.switchPointKind(-1)
 	case "right":
 		m.switchPointKind(1)
-	case "pageup":
-		m.follow = false
-		if m.view == 3 {
-			m.pointOffset = max(0, m.pointOffset-100)
-			m.cursor = 0
-		} else {
-			m.cursor = max(0, m.cursor-15)
-		}
-	case "pagedown":
-		m.follow = false
-		if m.view == 3 {
-			if m.pointOffset+100 < m.detail.View.PointMatches {
-				m.pointOffset += 100
-				m.cursor = 0
-			}
-		} else {
-			m.cursor += 15
-		}
 	default:
 		if len(key) == 1 && key[0] >= '1' && key[0] <= '7' {
 			m.selectView(int(key[0] - '1'))
@@ -433,6 +415,64 @@ func (m *model) key(key string) bool {
 	}
 	return false
 }
+func (m *model) moveListCursor(key string) {
+	m.follow = false
+	offset, count := 0, len(m.rows())
+	if m.view == 3 {
+		offset, count = m.pointOffset, m.pointRowCount()
+	}
+	target := offset + m.cursor
+	step := m.tableRows(m.terminalHeight)
+	if m.view == 5 && len(m.frameRows) > 0 {
+		switch key {
+		case "up":
+			m.frameLine--
+		case "down":
+			m.frameLine++
+		case "home":
+			m.frameLine = 0
+		case "end":
+			m.frameLine = len(m.frameRows) - 1
+		case "pageup":
+			m.frameLine -= step
+			m.frameTop -= step
+		case "pagedown":
+			m.frameLine += step
+			m.frameTop += step
+		}
+		m.frameLine = min(max(0, m.frameLine), len(m.frameRows)-1)
+		m.cursor = min(m.frameRows[m.frameLine], max(0, count-1))
+		return
+	}
+	switch key {
+	case "up":
+		target--
+	case "down":
+		target++
+	case "home":
+		target = 0
+	case "end":
+		target = count - 1
+	case "pageup":
+		target -= step
+	case "pagedown":
+		target += step
+	}
+	if m.view == 3 {
+		m.movePointCursor(target)
+		if m.pointLoading {
+			return
+		}
+	} else {
+		m.cursor = min(max(0, target), max(0, count-1))
+	}
+	if key == "pageup" {
+		m.listStart = max(0, m.listStart-step)
+	} else if key == "pagedown" {
+		m.listStart += step
+	}
+}
+
 func fetch(ctx context.Context, req request) update {
 	sockets, err := observe.Discover(req.dir)
 	result := update{socket: req.socket, request: req, err: err}
@@ -592,6 +632,10 @@ func (m *model) apply(u update) {
 	m.connected = true
 	m.socket, m.channel, m.device = u.socket, u.channel, u.device
 	m.detail = u.detail
+	if m.pointLoading {
+		m.cursor, m.listStart = m.pointTarget, m.pointStart
+		m.pointLoading = false
+	}
 	if u.kind != "" {
 		if m.pointKind != u.kind {
 			m.pointOffset = 0
@@ -599,7 +643,7 @@ func (m *model) apply(u update) {
 		m.pointKind = u.kind
 	}
 	if m.pointOffset > 0 && m.pointOffset >= m.detail.View.PointMatches {
-		m.pointOffset = max(0, (m.detail.View.PointMatches-1)/100*100)
+		m.changePointPage(max(0, (m.detail.View.PointMatches-1)/core.PointPageSize*core.PointPageSize))
 	}
 	m.messages = append(m.messages, u.detail.View.Messages...)
 	if len(m.messages) > 1000 {
@@ -651,8 +695,8 @@ func Run(ctx context.Context, in, out *os.File, dir string) (result error) {
 		return err
 	}
 	defer term.Restore(int(in.Fd()), state)
-	fmt.Fprint(out, "\x1b[?1049h\x1b[?25l\x1b[2J")
-	defer fmt.Fprint(out, "\x1b[0m\x1b[?25h\x1b[?1049l")
+	fmt.Fprint(out, "\x1b[?1049h\x1b[?25l\x1b[6 q\x1b[2J")
+	defer fmt.Fprint(out, "\x1b[0m\x1b[0 q\x1b[?25h\x1b[?1049l")
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	keys := make(chan byte, 64)
@@ -735,6 +779,7 @@ func Run(ctx context.Context, in, out *os.File, dir string) (result error) {
 	pending := false
 	var escape, utf string
 	var escapedAt time.Time
+	caretSince := time.Now()
 	queue := func() {
 		if pending {
 			return
@@ -751,7 +796,8 @@ func Run(ctx context.Context, in, out *os.File, dir string) (result error) {
 		if err != nil {
 			return err
 		}
-		_, err = out.WriteString(m.render(width, height))
+		visible := time.Since(caretSince)/(500*time.Millisecond)%2 == 0
+		_, err = out.WriteString(terminalFrame(m.render(width, height), visible))
 		return err
 	}
 	queue()
@@ -793,11 +839,10 @@ func Run(ctx context.Context, in, out *os.File, dir string) (result error) {
 			}
 			if escape != "" {
 				escape += string(b)
-				codes := map[string]string{"\x1b[A": "up", "\x1b[B": "down", "\x1b[C": "right", "\x1b[D": "left", "\x1b[5~": "pageup", "\x1b[6~": "pagedown", "\x1b[3~": "delete", "\x1b[Z": "shift-tab", "\x1b[H": "home", "\x1b[F": "end", "\x1bOH": "home", "\x1bOF": "end", "\x1b[1~": "home", "\x1b[4~": "end", "\x1bOP": "f1", "\x1b[11~": "f1"}
-				if value, ok := codes[escape]; ok {
+				if value, ok := terminalKeys[escape]; ok {
 					key = value
 					escape = ""
-				} else if len(escape) > 5 || (len(escape) == 2 && b != '[' && b != 'O') || (len(escape) > 2 && b >= 64 && b <= 126) {
+				} else if len(escape) > 16 || (len(escape) == 2 && b != '[' && b != 'O') || (len(escape) > 2 && b >= 64 && b <= 126) {
 					escape = ""
 				}
 			} else {
@@ -805,8 +850,6 @@ func Run(ctx context.Context, in, out *os.File, dir string) (result error) {
 				case 27:
 					escape = "\x1b"
 					escapedAt = time.Now()
-				case 1:
-					key = "ctrl-a"
 				case 3:
 					key = "ctrl-c"
 				case 21:
@@ -831,8 +874,13 @@ func Run(ctx context.Context, in, out *os.File, dir string) (result error) {
 				}
 			}
 			if key != "" {
+				caretSince = time.Now()
 				if m.key(key) {
 					return nil
+				}
+				if m.pendingClipboard != "" {
+					fmt.Fprintf(out, "\x1b]52;c;%s\a", base64.StdEncoding.EncodeToString([]byte(m.pendingClipboard)))
+					m.pendingClipboard = ""
 				}
 				if m.pendingConfiguration != nil {
 					configurationRequests <- *m.pendingConfiguration
@@ -860,6 +908,9 @@ func wrap(text string, width int) []string {
 	g := uniseg.NewGraphemes(text)
 	for g.Next() {
 		w := g.Width()
+		if g.Str() == inputCaret {
+			w = 0
+		}
 		if used+w > width {
 			lines = append(lines, line.String())
 			line.Reset()

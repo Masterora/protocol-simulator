@@ -173,7 +173,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$RELEASE_TAG" outputs/* --target "$GITHUB_SHA" --draft --title "protocol-simulator $RELEASE_TAG" --notes 'macOS 通用 DMG、Windows x64 Setup、Linux amd64/arm64 桌面 DEB 和服务器压缩包。下载对应安装包；SHA256SUMS 用于校验文件。macOS 使用本地签名，Linux 桌面适用于 Ubuntu 24.04/X11。'
+          gh release create "$RELEASE_TAG" outputs/* --target "$GITHUB_SHA" --draft --title "protocol-simulator $RELEASE_TAG" --notes-file RELEASE_NOTES.md
           gh release download "$RELEASE_TAG" --dir downloaded
           (cd downloaded && sha256sum --check SHA256SUMS)
           gh release edit "$RELEASE_TAG" --draft=false --latest

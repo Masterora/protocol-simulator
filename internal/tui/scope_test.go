@@ -135,7 +135,7 @@ func TestResourceFramesFitTerminalCellsAndExposeContext(t *testing.T) {
 						t.Fatalf("%dx%d: %d cells %q", width, height, n, line)
 					}
 				}
-				if strings.Contains(lines[0], "PRS") || !strings.HasSuffix(strings.TrimRight(lines[len(lines)-2], " "), "Protocol-Simulator") || !strings.Contains(plain, "┌") || !strings.Contains(plain, "└") {
+				if strings.Contains(lines[0], "PRS") || !strings.Contains(plain, "┌") || !strings.Contains(plain, "└") {
 					t.Fatal(plain)
 				}
 			}
@@ -143,7 +143,7 @@ func TestResourceFramesFitTerminalCellsAndExposeContext(t *testing.T) {
 	}
 }
 func stripStyles(s string) string {
-	for _, style := range []string{reset, cyan, purple, muted, white, green, yellow, red, selected, active, "\x1b[K"} {
+	for _, style := range []string{reset, cyan, purple, muted, white, green, yellow, shortcutDescriptionColor, red, selected, active, "\x1b[K"} {
 		s = strings.ReplaceAll(s, style, "")
 	}
 	return s

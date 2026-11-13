@@ -57,14 +57,15 @@ func TestNavigationSearchDetailAndQuitNeverOwnRuntime(t *testing.T) {
 		t.Fatal("point detail unavailable")
 	}
 	m.key("esc")
-	m.key(":")
-	for _, key := range []string{"l", "o", "g", "s", "enter"} {
-		m.key(key)
-	}
+	m.key("7")
 	if m.view != 6 {
 		t.Fatal(m)
 	}
 	m.key("?")
+	if !strings.Contains(m.render(90, 24), "配置速查") {
+		t.Fatal("configuration guide is not visible on the first help screen")
+	}
+	m.key("pagedown")
 	if !strings.Contains(m.render(90, 24), "工程继续运行") {
 		t.Fatal(m.render(90, 24))
 	}

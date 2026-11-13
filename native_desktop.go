@@ -88,7 +88,7 @@ type nativeWindows struct {
 type nativeRemote struct {
 	address, token, session string
 	kind                    string
-	exiting                 atomic.Bool
+	exiting, presented      atomic.Bool
 }
 type nativeRequest struct {
 	Session string            `json:"session"`
@@ -228,7 +228,7 @@ func (n *nativeWindows) serve(w http.ResponseWriter, r *http.Request) {
 // Only editor operations are reachable over IPC. File dialogs and application
 // lifecycle methods always run in the owning desktop window.
 var nativeMethods = map[string]bool{
-	"PreviewPointTable": true, "ApplyPointTable": true, "ExportPointTable": true, "GetRawTools": true, "SaveRawTools": true, "StartRawTask": true, "StopRawTask": true, "RunDesktopTool": true, "OpenRawTerminal": true, "CopyDesktopText": true, "SendRawText": true,
+	"PreviewPointTable": true, "ApplyPointTable": true, "ExportPointTable": true, "RunDesktopTool": true, "CopyDesktopText": true,
 	"GetAutoControlDetails": true,
 	"GetAutoControlStatus":  true, "GetView": true, "GetAutoData": true, "SaveAutoData": true, "StartAutoData": true, "SetAutoDataState": true,
 	"SetTelemetryRange":    true,
@@ -346,7 +346,7 @@ func isAutoWindow(kind string) bool {
 	return kind == "auto-yk-dialog" || kind == "auto-yt-dialog" || kind == "auto-bulk-dialog"
 }
 func deviceTaskWindow(kind string) bool {
-	return kind == "auto-data-dialog" || kind == "remote-config-dialog" || kind == "telemetry-values-dialog" || kind == "point-table-dialog" || kind == "packet-tools-dialog"
+	return kind == "auto-data-dialog" || kind == "remote-config-dialog" || kind == "telemetry-values-dialog" || kind == "point-table-dialog"
 }
 func reusableNativeWindow(kind string) bool {
 	return isAutoWindow(kind) || kind == "auto-data-dialog" || kind == "channel-dialog" || kind == "device-dialog"
@@ -357,8 +357,19 @@ func (a *App) QuitNativeWindow() {
 		runtime.Quit(a.ctx)
 	}
 }
+
+// PresentNativeEditor is called by the child WebView once its editor is populated.
+func (a *App) PresentNativeEditor() {
+	if a.remote != nil && a.remote.presented.CompareAndSwap(false, true) {
+		if c, err := a.GetNativeContext(); err == nil && c.Position != nil {
+			runtime.WindowSetPosition(a.ctx, c.Position.X, c.Position.Y)
+		}
+		presentEditorWindow()
+	}
+}
+
 func (a *App) ActivateNativeWindow() {
-	if a.remote != nil {
+	if a.remote != nil && a.remote.presented.Load() {
 		if reusableNativeWindow(a.remote.kind) && !isAutoWindow(a.remote.kind) {
 			if c, err := a.GetNativeContext(); err == nil && c.Position != nil {
 				runtime.WindowSetPosition(a.ctx, c.Position.X, c.Position.Y)
@@ -483,8 +494,6 @@ func windowTitle(c NativeContext) string {
 		return "信息体配置"
 	case "point-table-dialog":
 		return "点表导入导出"
-	case "packet-tools-dialog":
-		return "报文自动化"
 	case "toolbox-dialog":
 		return "工具箱"
 	case "manager-dialog":
@@ -504,7 +513,7 @@ func (n *nativeWindows) open(c NativeContext) (*nativeSession, error) {
 		c.Point = ""
 	}
 	switch c.Kind {
-	case "channel-dialog", "device-dialog", "point-dialog", "manager-dialog", "confirm-dialog", "control-dialog", "auto-yk-dialog", "auto-yt-dialog", "auto-bulk-dialog", "auto-data-dialog", "remote-config-dialog", "telemetry-values-dialog", "events-dialog", "point-table-dialog", "packet-tools-dialog", "toolbox-dialog":
+	case "channel-dialog", "device-dialog", "point-dialog", "manager-dialog", "confirm-dialog", "control-dialog", "auto-yk-dialog", "auto-yt-dialog", "auto-bulk-dialog", "auto-data-dialog", "remote-config-dialog", "telemetry-values-dialog", "events-dialog", "point-table-dialog", "toolbox-dialog":
 	default:
 		return nil, errors.New("无效窗口")
 	}
@@ -518,7 +527,7 @@ func (n *nativeWindows) open(c NativeContext) (*nativeSession, error) {
 		if deviceTaskWindow(c.Kind) && c.Generation != v.Generation {
 			continue
 		}
-		if c.Kind != "confirm-dialog" && v.Kind == c.Kind && v.Role == c.Role && v.Edit == c.Edit && (c.Kind == "channel-dialog" || !c.Edit && c.Kind != "auto-data-dialog" && c.Kind != "packet-tools-dialog" && c.Kind != "point-table-dialog" || v.Channel == c.Channel && v.Device == c.Device) && v.Point == c.Point && (c.Kind != "auto-data-dialog" && c.Kind != "remote-config-dialog" && c.Kind != "telemetry-values-dialog" || strings.TrimPrefix(v.PointKind, "tab:") == strings.TrimPrefix(c.PointKind, "tab:")) {
+		if c.Kind != "confirm-dialog" && v.Kind == c.Kind && v.Role == c.Role && v.Edit == c.Edit && (c.Kind == "channel-dialog" || !c.Edit && c.Kind != "auto-data-dialog" && c.Kind != "point-table-dialog" || v.Channel == c.Channel && v.Device == c.Device) && v.Point == c.Point && (c.Kind != "auto-data-dialog" && c.Kind != "remote-config-dialog" && c.Kind != "telemetry-values-dialog" || strings.TrimPrefix(v.PointKind, "tab:") == strings.TrimPrefix(c.PointKind, "tab:")) {
 			s.context.Position = c.Position
 			if c.Kind == "channel-dialog" {
 				s.context.Channel = c.Channel

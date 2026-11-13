@@ -46,13 +46,13 @@ func TestLiveRuleDetailUpdatesCyclesSettingsAndPreservesIdentityWhenReordered(t 
 	target.Mode = "random"
 	applyDetail(&m, core.Inspection{Rules: &core.AutoDataSnapshot{Status: "paused", Config: core.AutoDataConfig{Rules: []core.AutoDataRule{other, target}}, Cycles: []uint64{80, 7}}})
 	text := detailText(&m)
-	for _, want := range []string{`"执行次数": 7`, `"周期（毫秒）": 2000`, `"状态": "已暂停"`, `"模式": "随机"`} {
+	for _, want := range []string{`执行次数：7`, `周期（毫秒）：2000`, `状态：已暂停`, `模式：随机`} {
 		if !strings.Contains(text, want) {
 			t.Fatal(text, want)
 		}
 	}
 	applyDetail(&m, core.Inspection{Rules: &core.AutoDataSnapshot{Config: core.AutoDataConfig{Rules: []core.AutoDataRule{other}}, Cycles: []uint64{90}}})
-	if !strings.Contains(detailText(&m), "所选规则已移除") || strings.Contains(detailText(&m), `"执行次数": 90`) {
+	if !strings.Contains(detailText(&m), "所选规则已移除") || strings.Contains(detailText(&m), `执行次数：90`) {
 		t.Fatal(detailText(&m))
 	}
 }
@@ -63,7 +63,7 @@ func TestDuplicateRuleDetailsRemainLiveUntilTheirConfigurationBecomesAmbiguous(t
 	m.openDetail()
 	m.detail.View.Rules.Cycles[1] = 3
 	m.refreshDetail()
-	if !strings.Contains(detailText(&m), `"执行次数": 3`) {
+	if !strings.Contains(detailText(&m), `执行次数：3`) {
 		t.Fatal(detailText(&m))
 	}
 	m.detail.View.Rules.Config.Rules[0].Mode = "fixed"

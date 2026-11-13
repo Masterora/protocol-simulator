@@ -88,7 +88,7 @@ func TestReadOnlyObserverBoundsPagesHistoryAndLifecycle(t *testing.T) {
 	if after.Project.Name != before.Project.Name || len(after.Project.Channels) != len(before.Project.Channels) || after.Project.Channels[0].Devices[0].Points[0].Value != 42 || after.Dirty != before.Dirty {
 		t.Fatal("observer mutated engine")
 	}
-	if _, err = engine.UpsertChannel(core.Channel{ID: "other", Name: "other", Protocol: "raw", Role: "server", Transport: "tcp-server", Address: "127.0.0.1:15021"}); err != nil {
+	if _, err = engine.UpsertChannel(core.Channel{ID: "other", Name: "other", Protocol: "modbus-tcp", Devices: []core.Device{}, Role: "server", Transport: "tcp-server", Address: "127.0.0.1:15021"}); err != nil {
 		t.Fatal("closing observer affected engine", err)
 	}
 }

@@ -17,7 +17,6 @@ import (
 
 type Engine struct {
 	pointCommunications map[pointCommunicationKey]string
-	rawTasks            map[rawTaskKey]*rawTask
 	viewClock           uint64
 	viewMetadata        uint64
 	viewPoints          map[string]*pointRevision
@@ -49,7 +48,6 @@ func newID() string { b := make([]byte, 8); _, _ = rand.Read(b); return hex.Enco
 func cloneProject(p Project) Project {
 	p.Channels = append([]Channel{}, p.Channels...)
 	for i := range p.Channels {
-		p.Channels[i].RawTools = cloneRawTools(p.Channels[i].RawTools)
 		p.Channels[i].TransportDraft = cloneTransportDraft(p.Channels[i].TransportDraft)
 		p.Channels[i].Points = append([]Point{}, p.Channels[i].Points...)
 		for j := range p.Channels[i].Points {
@@ -229,10 +227,6 @@ func (e *Engine) ReplaceProject(p Project, path string) error {
 	e.resetAutoControls()
 	e.cancelDataLocked("", "")
 	e.dataJobs = nil
-	for _, j := range e.rawTasks {
-		j.cancel()
-	}
-	e.rawTasks = nil
 	e.dataGeneration++
 	e.project = cloneProject(p)
 	e.pointCommunications = nil
@@ -285,6 +279,26 @@ func decodeProject(reader io.Reader) (Project, error) {
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return Project{}, errors.New("工程文件包含多余内容")
+	}
+	// Older desktop versions saved an empty channel as RAW before a
+	// device was added. Keep its endpoint and role as a protocol placeholder.
+	for i := range p.Channels {
+		c := &p.Channels[i]
+		if c.Protocol != "raw" {
+			continue
+		}
+		if len(c.Devices) != 0 || len(c.Points) != 0 {
+			return Project{}, fmt.Errorf("%s：旧 RAW 通道包含点位，请保留原工程并转换为支持的规约", c.Name)
+		}
+		switch c.Transport {
+		case "tcp-client", "tcp-server":
+			c.Protocol = "iec104"
+		case "serial":
+			c.Protocol = "modbus-rtu"
+		default:
+			return Project{}, fmt.Errorf("%s：旧 RAW 传输方式已移除", c.Name)
+		}
+		c.Devices = []Device{}
 	}
 	if err := validateProject(&p); err != nil {
 		return Project{}, err
@@ -417,7 +431,6 @@ func (e *Engine) stopLocked(id string) {
 	e.stopAutoControls(id)
 	e.mu.Lock()
 	e.cancelDataLocked(id, "")
-	e.cancelRawTasksLocked(id)
 	s := e.running[id]
 	delete(e.running, id)
 	v := e.states[id]
@@ -451,28 +464,6 @@ func (e *Engine) getSession(id string) (*session, error) {
 		return nil, errors.New("请先启动通道")
 	}
 	return s, nil
-}
-func (e *Engine) SendHex(id, text string, crc bool) error {
-	s, err := e.getSession(id)
-	if err != nil {
-		return err
-	}
-	clean := strings.NewReplacer(" ", "", "\n", "", "\r", "", "\t", "", ":", "").Replace(strings.TrimSpace(text))
-	if len(clean) == 0 || len(clean) > 8192 {
-		return errors.New("请输入 1–4096 字节的十六进制报文")
-	}
-	b, err := hex.DecodeString(clean)
-	if err != nil {
-		return errors.New("十六进制内容无效，应为完整的字节对")
-	}
-	if crc {
-		n := CRC16(b)
-		b = append(b, byte(n), byte(n>>8))
-	}
-	if s.cfg.Protocol != "raw" {
-		return errors.New("原始报文发送仅在 RAW 通道启用，避免破坏协议序号")
-	}
-	return s.broadcastRaw(b)
 }
 func (e *Engine) ReadModbus(id string, fc byte, start, count uint16) error {
 	return e.ReadDeviceModbus(id, "", fc, start, count)

@@ -62,7 +62,7 @@ func Fields(values map[string]any) map[string]json.RawMessage {
 var kinds = map[string]map[string]string{
 	"project": {"name": "string"},
 	"channel": {"id": "string", "name": "string", "protocol": "string", "role": "string", "transport": "string", "address": "string", "localAddress": "string", "baud": "integer", "parity": "string", "dataBits": "integer", "stopBits": "integer", "timeoutMs": "integer"},
-	"device":  {"id": "string", "name": "string", "unit": "integer", "commonAddress": "integer", "pointCount": "integer", "pointKind": "string", "pointStart": "integer"},
+	"device":  {"id": "string", "name": "string", "unit": "integer", "commonAddress": "integer", "pointCount": "integer", "pointKind": "string", "pointStart": "integer", "initialPoints": "initialPoints"},
 	"point":   {"name": "string", "kind": "string", "address": "integer", "value": "number", "quality": "integer", "wireType": "integer", "dataType": "string", "byteOrder": "string", "tab": "string", "feedback": "string", "count": "integer", "mappings": "mappings"},
 	"rule":    {"enabled": "boolean", "kind": "string", "points": "string", "start": "integer", "end": "integer", "intervalMs": "integer", "mode": "string", "min": "number", "max": "number", "step": "number", "cause": "integer", "stopOnDisconnect": "boolean"},
 	"binding": {"mappings": "mappings"},
@@ -73,6 +73,20 @@ func ParseField(resource, key, text string) (json.RawMessage, error) {
 	var value any
 	switch FieldType(resource, key) {
 	case "string":
+		if resource == "channel" && key == "protocol" {
+			switch text {
+			case "iec104", "modbus-tcp", "modbus-rtu":
+			default:
+				return nil, errors.New("请选择 IEC104、Modbus TCP 或 Modbus RTU")
+			}
+		}
+		if resource == "channel" && key == "transport" {
+			switch text {
+			case "tcp-client", "tcp-server", "serial":
+			default:
+				return nil, errors.New("请选择 TCP Client、TCP Server 或串口")
+			}
+		}
 		value = text
 	case "integer":
 		base := 10
@@ -101,6 +115,12 @@ func ParseField(resource, key, text string) (json.RawMessage, error) {
 			return nil, err
 		}
 		value = mappings
+	case "initialPoints":
+		selections := map[string]string{}
+		if err := json.Unmarshal([]byte(text), &selections); err != nil || selections == nil {
+			return nil, errors.New("初始点表应为点位类型和范围组成的 JSON 对象")
+		}
+		value = selections
 	default:
 		return nil, fmt.Errorf("不支持字段 %s", key)
 	}
@@ -334,7 +354,12 @@ func Apply(previous core.Project, req Request) (core.Project, Result, error) {
 		if req.Resource == "device" {
 			var d *core.Device
 			if req.Action == "add" {
-				c.Devices = append(c.Devices, core.Device{ID: NewID(), Name: fmt.Sprintf("装置%d", len(c.Devices)+1), Unit: 1, CommonAddress: 1, Points: []core.Point{}})
+				initial, e := defaultDevice(c)
+				if e != nil {
+					return fail(e)
+				}
+				initial.ID = NewID()
+				c.Devices = append(c.Devices, initial)
 				d = &c.Devices[len(c.Devices)-1]
 			} else {
 				d, err = device(c, req.Device)
@@ -342,17 +367,27 @@ func Apply(previous core.Project, req Request) (core.Project, Result, error) {
 					return fail(err)
 				}
 			}
-			if err = patch("device", d, req.Fields, "pointCount", "pointKind", "pointStart"); err != nil {
+			if err = patch("device", d, req.Fields, "pointCount", "pointKind", "pointStart", "initialPoints"); err != nil {
 				return fail(err)
 			}
 			if req.Action == "edit" {
-				for _, k := range []string{"pointCount", "pointKind", "pointStart"} {
+				for _, k := range []string{"pointCount", "pointKind", "pointStart", "initialPoints"} {
 					if _, ok := req.Fields[k]; ok {
 						return fail(errors.New("已有装置请在点位页新增点位，不重建原点表"))
 					}
 				}
+			} else if raw, ok := req.Fields["initialPoints"]; ok {
+				for _, key := range []string{"pointCount", "pointKind", "pointStart"} {
+					if _, exists := req.Fields[key]; exists {
+						return fail(errors.New("初始点表不能与单类型点位参数同时使用"))
+					}
+				}
+				d.Points, err = initialDevicePoints(c.Protocol, raw)
+				if err != nil {
+					return fail(err)
+				}
 			} else {
-				n, e := intField(req.Fields, "pointCount", 50)
+				n, e := intField(req.Fields, "pointCount", DefaultDevicePointCount)
 				if e != nil || n < 0 || n > 10000 {
 					return fail(errors.New("点位数量应为 0–10000"))
 				}

@@ -23,7 +23,7 @@ func (e *Engine) PointTable(channel, device string) (PointTableView, error) {
 	}
 	return PointTableView{}, errors.New("通道不存在")
 }
-func importedPointCandidate(c Channel, d Device, rows []Point, mode, kind string) ([]Point, error) {
+func BuildPointTable(c Channel, d Device, rows []Point, mode, kind string) ([]Point, error) {
 	if len(rows) == 0 || len(rows) > 100000 {
 		return nil, errors.New("导入点位数量应为1–100000")
 	}
@@ -91,7 +91,7 @@ func (e *Engine) CheckPointTable(channel, device string, revision uint64, rows [
 		if err != nil {
 			return 0, err
 		}
-		points, err := importedPointCandidate(c, *d, rows, mode, kind)
+		points, err := BuildPointTable(c, *d, rows, mode, kind)
 		if err != nil {
 			return 0, err
 		}
@@ -129,7 +129,7 @@ func (e *Engine) ImportPointTable(channel, device string, revision uint64, rows 
 		if err != nil {
 			return err
 		}
-		points, err := importedPointCandidate(*c, *d, rows, mode, kind)
+		points, err := BuildPointTable(*c, *d, rows, mode, kind)
 		if err != nil {
 			return err
 		}

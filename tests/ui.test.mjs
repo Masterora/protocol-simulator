@@ -541,7 +541,7 @@ test('legacy native telemetry launch contexts open the same combined editor', as
 test('newly added devices expose one automatic reporting editor for all telemetry points', async () => {
   const c = {
       ...channel('new'),
-      protocol: 'raw',
+      protocol: 'modbus-tcp',
       role: 'server',
       transport: 'tcp-server',
       devices: [],
@@ -726,57 +726,6 @@ test('communication groups follow transport and failed validation keeps edited f
     assert.equal(get('txtClientPort').value, '16001');
     assert.equal(get('txtClientIP').disabled, false);
     assert.match(h.$('channel-form').querySelector('.form-error').textContent, /端口无效/);
-  } finally {
-    await h.close();
-  }
-});
-test('UDP allows editing its local IP as well as its local and remote ports', async () => {
-  const c = { ...channel('a'), protocol: 'raw', devices: [] };
-  const h = await setup({ project: { name: 'udp local', channels: [c] }, states: [] });
-  try {
-    h.$('edit-channel').click();
-    const get = (id) => originalField(h, id, 'original-network-panel');
-    get('rbUDP').checked = true;
-    get('rbUDP').dispatchEvent(new h.w.Event('change', { bubbles: true }));
-    assert.equal(get('cbxServerIP').disabled, false);
-    get('cbxServerIP').value = '127.0.0.2';
-    get('txtServerPort').value = '19009';
-    h.$('channel-form').requestSubmit(
-      h.$('original-network-panel').querySelector('button[type=submit]'),
-    );
-    await tick();
-    await tick();
-    assert.equal(
-      h.calls.find((c) => c[0] === 'UpdateTransport')[1][0].localAddress,
-      '127.0.0.2:19009',
-    );
-  } finally {
-    await h.close();
-  }
-});
-test('UDP exposes remote and local ports and disables TCP local-assignment options', async () => {
-  const c = { ...channel('a'), protocol: 'raw', devices: [] };
-  const h = await setup({ project: { name: 'udp', channels: [c] }, states: [] });
-  try {
-    h.$('edit-channel').click();
-    const get = (id) => originalField(h, id, 'original-network-panel');
-    get('rbUDP').checked = true;
-    get('rbUDP').dispatchEvent(new h.w.Event('change', { bubbles: true }));
-    assert.equal(get('txtServerPort').disabled, false);
-    assert.equal(get('txtClientPort').disabled, false);
-    assert.equal(get('ck_AssignIpPort').disabled, true);
-    get('txtClientIP').value = '127.0.0.1';
-    get('txtClientPort').value = '19101';
-    get('txtServerPort').value = '19102';
-    h.$('channel-form').requestSubmit(
-      h.$('original-network-panel').querySelector('button[type=submit]'),
-    );
-    await tick();
-    await tick();
-    const config = h.calls.find((c) => c[0] === 'UpdateTransport')[1][0];
-    assert.equal(config.transport, 'udp');
-    assert.equal(config.address, '127.0.0.1:19101');
-    assert.equal(config.localAddress, '127.0.0.1:19102');
   } finally {
     await h.close();
   }
@@ -1393,7 +1342,7 @@ test('station modes isolate channel lists and channel creation follows the selec
     await settleInline();
     const config = h.calls.find((c) => c[0] === 'UpsertChannel')[1][0];
     assert.equal(config.role, 'server');
-    assert.equal(config.protocol, 'raw');
+    assert.equal(config.protocol, 'iec104');
     assert.equal(config.transport, 'tcp-server');
     assert.equal(h.calls.filter((c) => c[0] === 'StartChannel').length, 0);
   } finally {
@@ -1571,8 +1520,10 @@ test('adding devices closes on success and retains the incremented address for r
     h.$('add-device').click();
     assert.equal(h.$('device-protocol').value, 'iec104');
     assert.equal(h.$('device-version').value, '标准版');
+    assert.equal(h.$('device-version').closest('label').hidden, true);
     assert.ok(originalField(h, 'txtYC_Num'));
     chooseDeviceProtocol(h, 'modbus', 'TCP版');
+    assert.equal(h.$('device-version').closest('label').hidden, false);
     assert.equal(originalField(h, 'txtAdd').value, '1');
     originalField(h, 'txtAdd').value = '3';
     h.$('device-form').requestSubmit(h.$('device-form').querySelector('button[type=submit]'));
@@ -1802,7 +1753,7 @@ test('network dialog saves separate client/server IP and port controls', async (
 
 test('Modbus defaults to RTU and empty information-body fields are rejected', async () => {
   const h = await setup({
-    project: { name: 'raw', channels: [{ ...channel('a'), protocol: 'raw', devices: [] }] },
+    project: { name: 'raw', channels: [{ ...channel('a'), protocol: 'modbus-tcp', devices: [] }] },
     states: [{ id: 'a', status: 'stopped' }],
   });
   try {
@@ -1861,7 +1812,11 @@ test('native device editor follows the parent selection immediately on submit', 
     edit: false,
     activate: 0,
   };
-  const channels = ['a', 'b'].map((id) => ({ ...channel(id), protocol: 'raw', devices: [] }));
+  const channels = ['a', 'b'].map((id) => ({
+    ...channel(id),
+    protocol: 'modbus-tcp',
+    devices: [],
+  }));
   const h = await setup({ project: { name: 'shared', channels }, states: [] }, context);
   try {
     assert.equal(h.w.document.body.classList.contains('native-window'), true);
@@ -3035,7 +2990,7 @@ test('queued manager edits merge the latest endpoint, binding and point data', a
 test('manager exposes serial settings inline and commits selection without duplicate blur', async () => {
   const h = await setupManager();
   try {
-    h.state.project.channels[1].protocol = 'raw';
+    h.state.project.channels[1].protocol = 'modbus-rtu';
     h.state.project.channels[1].transport = 'serial';
     h.state.project.channels[1].address = '/dev/cu.test';
     await h.refresh();
@@ -3119,7 +3074,7 @@ test('communication blur and polling preserve the apply button during the first 
 test('new device has a visible unused default name and saves the typed name', async () => {
   const c = {
     ...channel('a'),
-    protocol: 'raw',
+    protocol: 'modbus-tcp',
     devices: [{ id: 'first', name: '装置1', points: [], unit: 1, commonAddress: 1 }],
   };
   const h = await setup({ project: { name: 'names', channels: [c] }, states: [] });
@@ -6234,7 +6189,6 @@ test('connection labels follow transport changes while station role and address 
     for (const [transport, label] of [
       ['tcp-server', '监听地址'],
       ['tcp-client', '目标地址'],
-      ['udp', '目标地址'],
       ['serial', '串口路径'],
     ]) {
       h.state.project.channels[1].transport = transport;
@@ -6353,96 +6307,18 @@ test('point table preview validates before confirmation and applies the reviewed
   }
 });
 
-test('packet automation saves drafts without starting and editor close preserves explicit jobs', async () => {
-  const raw = { ...channel('raw'), protocol: 'raw', devices: [] };
-  const view = {
-    config: {
-      framing: 'idle',
-      idleMs: 30,
-      frameLength: 1,
-      delimiter: '0D0A',
-      replies: [],
-      rows: [],
-      selection: '',
-      intervalMs: 1000,
-      cycleMs: 0,
-      cycles: 1,
-    },
-    reply: { running: false, sent: 0, cycles: 0, error: '' },
-    send: { running: false, sent: 0, cycles: 0, error: '' },
-  };
-  const h = await setup({
-    project: { name: 'raw', channels: [raw] },
-    states: [{ id: 'raw', status: 'connected', peers: 1 }],
-  });
-  try {
-    h.overrides.GetRawTools = () => structuredClone(view);
-    h.overrides.SaveRawTools = (id, cfg) => {
-      assert.equal(id, 'raw');
-      view.config = structuredClone(cfg);
-    };
-    h.overrides.StartRawTask = (id, mode) => {
-      assert.equal(id, 'raw');
-      view[mode].running = true;
-    };
-    h.overrides.StopRawTask = (id, mode) => {
-      assert.equal(id, 'raw');
-      view[mode].running = false;
-    };
-    h.$('open-packet-tools').click();
-    await settleInline();
-    h.$('packet-add-send').click();
-    const input = h.$('packet-sends').querySelector('[data-packet-field=data]');
-    input.value = 'AA 55';
-    input.dispatchEvent(new h.w.Event('input', { bubbles: true }));
-    await h.refresh();
-    assert.equal(input.value, 'AA 55');
-    h.$('packet-send-toggle').click();
-    await settleInline();
-    assert.equal(
-      h.calls.some((c) => c[0] === 'StartRawTask'),
-      false,
-    );
-    assert.match(h.$('packet-tools-dialog').querySelector('.form-error').textContent, /先保存/);
-    h.$('packet-save').click();
-    await settleInline();
-    assert.equal(view.config.rows[0].data, 'AA 55');
-    assert.equal(
-      h.calls.some((c) => c[0] === 'StartRawTask'),
-      false,
-    );
-    h.$('packet-send-toggle').click();
-    await settleInline();
-    assert.equal(view.send.running, true);
-    assert.equal(input.disabled, true);
-    assert.equal(h.$('packet-send-toggle').textContent, '停止');
-    h.$('pause-messages').click();
-    await tick();
-    assert.equal(view.send.running, true);
-    h.$('packet-tools-dialog').querySelector('[data-close]').click();
-    await tick();
-    assert.equal(view.send.running, true);
-    assert.equal(
-      h.calls.some((c) => c[0] === 'StopRawTask'),
-      false,
-    );
-    h.$('open-packet-tools').click();
-    await settleInline();
-    h.$('packet-send-toggle').click();
-    await settleInline();
-    assert.equal(view.send.running, false);
-    assert.equal(h.$('packet-sends').querySelector('[data-packet-field=data]').disabled, false);
-  } finally {
-    await h.close();
-  }
-});
-
 test('toolbox preserves tool drafts and renders results as text', async () => {
   const h = await setup();
   try {
     h.overrides.RunDesktopTool = (r) => ({ text: r.kind + ':' + r.input, fields: [] });
     const before = JSON.stringify(h.state);
     h.$('open-toolbox').click();
+    assert.equal(h.$('tool-kind').value, 'time');
+    assert.deepEqual(
+      [...h.$('tool-navigation').children].map((button) => button.dataset.tool),
+      ['time', 'packet', 'number', 'network', 'encoding', 'string'],
+    );
+    h.$('tool-navigation').querySelector('[data-tool=number]').click();
     await tick();
     h.$('tool-input').value = '<script>alert(1)</script>';
     h.$('toolbox-run').click();
@@ -6469,51 +6345,6 @@ test('toolbox preserves tool drafts and renders results as text', async () => {
   }
 });
 
-test('RAW terminal text sends only on explicit submit and preserves per-channel format drafts', async () => {
-  const h = await setup({
-    project: {
-      name: 'terminal',
-      channels: [
-        { ...channel('a'), protocol: 'raw', devices: [] },
-        { ...channel('b'), protocol: 'raw', devices: [] },
-      ],
-    },
-    states: [
-      { id: 'a', status: 'connected', peers: 1 },
-      { id: 'b', status: 'connected', peers: 1 },
-    ],
-  });
-  try {
-    h.overrides.SendRawText = () => {};
-    h.$('raw-format').value = 'text';
-    h.$('raw-format').dispatchEvent(new h.w.Event('change'));
-    h.$('raw-hex').value = '中文';
-    h.$('append-crc').checked = true;
-    h.w.document.querySelector('[data-select=b]').click();
-    await tick();
-    h.w.document.querySelector('[data-select=a]').click();
-    await tick();
-    assert.equal(h.$('raw-format').value, 'text');
-    assert.equal(h.$('raw-hex').value, '中文');
-    assert.equal(
-      h.calls.some((c) => ['SendRawText', 'SendHex'].includes(c[0])),
-      false,
-    );
-    h.$('raw-form').dispatchEvent(new h.w.Event('submit', { bubbles: true, cancelable: true }));
-    await settleInline();
-    assert.deepEqual(
-      h.calls.filter((c) => c[0] === 'SendRawText').map((c) => c[1]),
-      [['a', '中文', true]],
-    );
-    assert.equal(
-      h.calls.some((c) => c[0] === 'SendHex'),
-      false,
-    );
-  } finally {
-    await h.close();
-  }
-});
-
 test('editing toolbox input invalidates an in-flight conversion and its copy action', async () => {
   const h = await setup();
   try {
@@ -6523,6 +6354,7 @@ test('editing toolbox input invalidates an in-flight conversion and its copy act
         finish = resolve;
       });
     h.$('open-toolbox').click();
+    h.$('tool-navigation').querySelector('[data-tool=number]').click();
     h.$('tool-input').value = '255';
     h.$('toolbox-run').click();
     await tick();
@@ -6546,51 +6378,6 @@ test('editing toolbox input invalidates an in-flight conversion and its copy act
   }
 });
 
-test('saving packet configuration freezes drafts and rejects duplicate submissions', async () => {
-  const raw = { ...channel('raw'), protocol: 'raw', devices: [] };
-  const view = {
-    config: {
-      framing: 'idle',
-      idleMs: 30,
-      frameLength: 1,
-      delimiter: '0D0A',
-      replies: [],
-      rows: [],
-      selection: '',
-      intervalMs: 1000,
-      cycleMs: 0,
-      cycles: 1,
-    },
-    reply: { running: false, sent: 0 },
-    send: { running: false, sent: 0, cycles: 0 },
-  };
-  const h = await setup({ project: { name: 'raw', channels: [raw] } });
-  try {
-    let finish;
-    h.overrides.GetRawTools = () => structuredClone(view);
-    h.overrides.SaveRawTools = () =>
-      new Promise((resolve) => {
-        finish = resolve;
-      });
-    h.$('open-packet-tools').click();
-    await settleInline();
-    h.$('packet-add-send').click();
-    h.$('packet-save').click();
-    await tick();
-    assert.equal(h.$('packet-interval').disabled, true);
-    assert.equal(h.$('packet-save').disabled, true);
-    h.$('packet-save').click();
-    await tick();
-    assert.equal(h.calls.filter((c) => c[0] === 'SaveRawTools').length, 1);
-    finish();
-    await settleInline();
-    assert.equal(h.$('packet-interval').disabled, false);
-    assert.equal(h.$('packet-save').disabled, true);
-  } finally {
-    await h.close();
-  }
-});
-
 test('toolbox renders dedicated layouts and only relevant parameters', async () => {
   const h = await setup();
   try {
@@ -6602,6 +6389,7 @@ test('toolbox renders dedicated layouts and only relevant parameters', async () 
       ],
     });
     h.$('open-toolbox').click();
+    h.$('tool-navigation').querySelector('[data-tool=number]').click();
     await tick();
     assert.equal(h.$('tool-order-wrap').hidden, true);
     h.$('tool-input').value = '255';
@@ -6886,6 +6674,7 @@ test('toolbox examples follow byte width, byte order, encoding and CP56Time2a', 
       h.$('tool-example').click();
       return h.$('tool-input').value;
     };
+    select('tool-kind', 'number');
     select('tool-operation', 'hex-tofloat32');
     assert.equal(sample().split(' ').length, 4);
     select('tool-operation', 'hex-tofloat64');
@@ -7186,5 +6975,64 @@ test('all supported protocols and devices share the seconds-only point time colu
     } finally {
       await h.close();
     }
+  }
+});
+
+test('server workspace imports and parses frames, checks deployment, and shows SSH status', async () => {
+  const h = await setup();
+  try {
+    const frames = [
+      { time: '2026-11-12T01:00:00Z', channelId: 'gateway', direction: 'RX', hex: '680407000000' },
+      { time: '2026-11-12T01:01:00Z', channelId: 'other', direction: 'TX', hex: '68040B000000' },
+    ];
+    h.overrides.OpenServerFrames = () => frames;
+    h.overrides.RunDesktopTool = (request) => ({
+      fields: [{ name: request.kind, value: request.input }],
+    });
+    h.overrides.CheckServerDeployment = (ip, rules) => [ip, String(rules)];
+    h.overrides.ListSSHHosts = () => ['git.utapp.cn', 'prs-198'];
+    h.overrides.InspectServerSSH = (target) => [
+      { info: { pid: 10, view: { name: target, channels: [] }, logs: [] } },
+    ];
+    h.$('open-field-tools').click();
+    h.w.document.querySelector('[data-field-panel=field-frames]').click();
+    h.$('field-open-frames').click();
+    await settleInline();
+    h.$('field-direction').value = 'RX';
+    h.$('field-direction').dispatchEvent(new h.w.Event('change'));
+    assert.equal(h.$('field-rows').children.length, 1);
+    h.$('field-rows').querySelector('button').click();
+    await settleInline();
+    assert.equal(h.$('field-hex').value, frames[0].hex);
+    assert.match(h.$('field-decoded').textContent, /iec104  680407000000/);
+    h.w.document.querySelector('[data-field-panel=field-check]').click();
+    h.$('field-ip').value = '10.20.12.198';
+    h.$('field-rules').checked = true;
+    h.$('field-run-check').click();
+    await settleInline();
+    assert.equal(h.$('field-check-output').textContent, '10.20.12.198\ntrue');
+    h.w.document.querySelector('[data-field-panel=field-ssh]').click();
+    assert.equal(h.$('field-host').value, '');
+    h.$('field-manage-hosts').click();
+    await settleInline();
+    h.$('field-import-host').value = 'prs-198';
+    h.$('field-import-host').dispatchEvent(new h.w.Event('change'));
+    h.$('field-host-name').value = '网关服务器';
+    h.$('field-host-save').click();
+    assert.match(h.$('field-host').textContent, /网关服务器/);
+    assert.doesNotMatch(h.$('field-host').textContent, /git\.utapp\.cn/);
+    h.$('field-host-new').click();
+    h.$('field-host-target').value = 'ut@10.20.12.189';
+    h.$('field-host-save').click();
+    assert.equal(h.$('field-host').value, 'ut@10.20.12.189');
+    h.$('field-host-remove').click();
+    assert.equal(h.$('field-host').value, 'prs-198');
+    h.$('field-run-ssh').click();
+    await settleInline();
+    assert.equal(h.$('field-ssh-output').querySelector('h3').textContent, 'prs-198');
+    assert.match(h.$('field-ssh-output').textContent, /PID 10/);
+    assert.equal(h.w.localStorage.getItem('gylab-ssh-host'), 'prs-198');
+  } finally {
+    await h.close();
   }
 });

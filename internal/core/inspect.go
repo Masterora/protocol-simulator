@@ -8,6 +8,8 @@ import (
 
 // InspectRequest is read-only and deliberately bounded. It never copies an
 // entire project's point tables to support a single terminal page.
+const PointPageSize = 100
+
 type InspectRequest struct {
 	Channel  string `json:"channel"`
 	Device   string `json:"device"`
@@ -107,7 +109,7 @@ func (e *Engine) Inspect(request InspectRequest) Inspection {
 			}
 			v.PointMatches = len(matches)
 			start := min(offset, len(matches))
-			for _, i := range matches[start : start+min(100, len(matches)-start)] {
+			for _, i := range matches[start : start+min(PointPageSize, len(matches)-start)] {
 				v.Points = append(v.Points, e.communicationPointLocked(c.ID, d.ID, d.Points[i]))
 			}
 			if c.Role == "server" {

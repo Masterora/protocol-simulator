@@ -22,7 +22,6 @@ type session struct {
 	mu           sync.Mutex
 	peers        map[*peer]bool
 	listener     net.Listener
-	udp          *net.UDPConn
 	closed       bool
 	done         chan struct{}
 	cancel       context.CancelFunc
@@ -103,24 +102,6 @@ func (s *session) open() error {
 		s.cancel = cancel
 		s.wg.Add(1)
 		go s.connect(ctx, &dialer)
-	case "udp":
-		remote, err := net.ResolveUDPAddr("udp", s.cfg.Address)
-		if err != nil {
-			return err
-		}
-		local := &net.UDPAddr{}
-		if s.cfg.LocalAddress != "" {
-			local, err = net.ResolveUDPAddr("udp", s.cfg.LocalAddress)
-			if err != nil {
-				return err
-			}
-		}
-		c, err := net.DialUDP("udp", local, remote)
-		if err != nil {
-			return err
-		}
-		s.udp = c
-		s.addPeer(c, remote.String())
 	case "serial":
 		parity := serial.NoParity
 		if s.cfg.Parity == "E" {
@@ -297,9 +278,6 @@ func (s *session) forPeers(fn func(*peer) error) error {
 	}
 	return nil
 }
-func (s *session) broadcastRaw(b []byte) error {
-	return s.forPeers(func(p *peer) error { p.mu.Lock(); defer p.mu.Unlock(); return p.writeLocked(b, "手动发送") })
-}
 func (p *peer) writeLocked(b []byte, summary string) error {
 	if p.closed {
 		return errors.New("连接已关闭")
@@ -389,10 +367,7 @@ func (p *peer) readLoop() {
 		case "iec104":
 			b, err = Read104(frame)
 		default:
-			buf := make([]byte, 4096)
-			var n int
-			n, err = r.Read(buf)
-			b = buf[:n]
+			err = errors.New("不支持的协议")
 		}
 		if err != nil {
 			select {
@@ -413,8 +388,6 @@ func (p *peer) readLoop() {
 		p.mu.Unlock()
 		p.s.e.log(p.s.cfg.ID, p.address, "RX", b, describe(p.s.cfg.Protocol, b))
 		switch p.s.cfg.Protocol {
-		case "raw":
-			p.s.dispatchRaw(p, b)
 		case "modbus-tcp", "modbus-rtu":
 			err = p.handleModbus(b)
 		case "iec104":

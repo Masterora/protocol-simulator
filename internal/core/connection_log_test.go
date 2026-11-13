@@ -9,7 +9,7 @@ import (
 func TestConnectionLogsDistinguishPeerDisconnectFromChannelStop(t *testing.T) {
 	e := NewEngine()
 	t.Cleanup(e.StopAll)
-	id, err := e.UpsertChannel(Channel{Name: "gateway", Protocol: "raw", Role: "server", Transport: "tcp-server", Address: "127.0.0.1:0"})
+	id, err := e.UpsertChannel(Channel{Name: "gateway", Protocol: "modbus-tcp", Devices: []Device{}, Role: "server", Transport: "tcp-server", Address: "127.0.0.1:0"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestConnectionLogsDistinguishPeerDisconnectFromChannelStop(t *testing.T) {
 	if state := e.Snapshot().States[0]; state.Status != "connected" || state.Peers != 1 {
 		t.Fatalf("one peer disconnect stopped the channel: %+v", state)
 	}
-	if _, err := second.Write([]byte("still connected")); err != nil {
+	if _, err := second.Write(EncodeTCP(1, 1, []byte{3, 0, 0, 0, 1})); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, func() bool {

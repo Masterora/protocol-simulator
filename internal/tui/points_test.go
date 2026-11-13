@@ -73,7 +73,7 @@ func TestPointKindSwitchResetsSearchPageAndRejectsPreviousKindResponse(t *testin
 	}
 }
 
-func TestContextControlsAndStatusStayAtBottomInEveryViewAndDetail(t *testing.T) {
+func TestContextControlsAndStatusArePlacedAroundTheTableInEveryViewAndDetail(t *testing.T) {
 	m := model{discovered: true, connected: true, socket: "s", pointKind: "yc"}
 	for view := 0; view < 7; view++ {
 		for _, width := range []int{60, 90, 150} {
@@ -88,20 +88,20 @@ func TestContextControlsAndStatusStayAtBottomInEveryViewAndDetail(t *testing.T) 
 					if strings.Contains(line, "┌") || strings.Contains(line, "╭") {
 						table = i
 					}
-					if i == len(lines)-2 {
+					if i == 4 {
 						action = i
 					}
 					if strings.Contains(line, "Produced by Der_Orange") {
 						status = i
 					}
 				}
-				if table < 0 || action < 0 || status < 0 || action != len(lines)-2 || status != len(lines)-1 || action <= table {
+				if table < 0 || action < 0 || status < 0 || action != 4 || status != len(lines)-1 || action >= table {
 					t.Fatal(view, width, overlay, plain)
 				}
-				if !strings.Contains(lines[len(lines)-3], "└") {
+				if !strings.ContainsAny(lines[len(lines)-2], "└╰") {
 					t.Fatal("footer is not below table", plain)
 				}
-				if !strings.Contains(lines[1], "[q]退出") || strings.Contains(lines[len(lines)-2], "[q]") {
+				if strings.Contains(lines[1], "[q]") || strings.Contains(lines[4], "[q]") == overlay {
 					t.Fatal("global actions duplicated in footer", plain)
 				}
 			}

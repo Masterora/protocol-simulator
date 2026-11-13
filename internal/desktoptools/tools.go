@@ -252,7 +252,7 @@ func Convert(r Request) (Result, error) {
 		case "json-compact":
 			var compact bytes.Buffer
 			if err := json.Compact(&compact, []byte(r.Input)); err != nil {
-				return Result{}, err
+				return Result{}, errors.New("请输入完整有效的 JSON")
 			}
 			out = compact.String()
 		case "hex-format", "hexdump", "hex-to-base64", "base64-to-hex":
@@ -284,7 +284,7 @@ func Convert(r Request) (Result, error) {
 			d := json.NewDecoder(strings.NewReader(r.Input))
 			d.UseNumber()
 			if err := d.Decode(&v); err != nil {
-				return Result{}, err
+				return Result{}, errors.New("请输入完整有效的 JSON")
 			}
 			if d.Decode(new(any)) != io.EOF {
 				return Result{}, errors.New("JSON包含多余内容")
@@ -376,7 +376,7 @@ func Convert(r Request) (Result, error) {
 				}
 			}
 			if err != nil {
-				return Result{}, errors.New("请输入YYYY-MM-DD HH:mm:ss或RFC3339时间")
+				return Result{}, errors.New("日期或时间无效，请检查年月日、时分秒")
 			}
 			t = t.In(loc)
 		default:

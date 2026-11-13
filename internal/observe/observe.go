@@ -28,6 +28,7 @@ type Log struct {
 	Fields   string    `json:"fields"`
 }
 type Info struct {
+	ToolOperations          bool            `json:"toolOperations,omitempty"`
 	RuleItemOperations      bool            `json:"ruleItemOperations,omitempty"`
 	RuleOperations          bool            `json:"ruleOperations,omitempty"`
 	DeletionOperations      bool            `json:"deletionOperations"`
@@ -123,6 +124,10 @@ func (s *Server) Log(level, message string, fields ...any) {
 	}
 }
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/v1/master" {
+		s.master(w, r)
+		return
+	}
 	if r.URL.Path == "/v1/configuration" {
 		s.configuration(w, r)
 		return
@@ -160,6 +165,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	configHandler, revision := s.configurationHandler, s.configurationRevision
 	s.mu.Unlock()
 	result.ConfigurationOperations = configHandler != nil
+	result.ToolOperations = result.ConfigurationOperations
 	result.DeletionOperations = configHandler != nil
 	if revision != nil {
 		result.ConfigurationRevision = revision()

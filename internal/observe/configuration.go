@@ -39,7 +39,11 @@ func (s *Server) configuration(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	var request projectfile.Request
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	limit := int64(1 << 20)
+	if r.URL.Query().Get("tools") == "1" {
+		limit = 32 << 20
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
 		w.WriteHeader(400)
@@ -81,7 +85,13 @@ func Configure(ctx context.Context, socket string, request projectfile.Request) 
 	}, DisableKeepAlives: true}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 15 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/v1/configuration", bytes.NewReader(body))
+	url := "http://unix/v1/configuration"
+	limit := int64(1 << 20)
+	if request.Resource == "point-table" {
+		url += "?tools=1"
+		limit = 32 << 20
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return reply.View, reply.Result, err
 	}
@@ -94,7 +104,7 @@ func Configure(ctx context.Context, socket string, request projectfile.Request) 
 	if resp.StatusCode == 404 || resp.StatusCode == 405 {
 		return reply.View, reply.Result, errors.New("运行中的工程不支持配置编辑，请升级该工程服务")
 	}
-	if err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&reply); err != nil {
+	if err = json.NewDecoder(io.LimitReader(resp.Body, limit)).Decode(&reply); err != nil {
 		return reply.View, reply.Result, err
 	}
 	if reply.Error != "" {

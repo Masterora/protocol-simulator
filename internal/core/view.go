@@ -55,18 +55,6 @@ type pointRevision struct {
 
 func (e *Engine) markConfigurationLocked() {
 	e.prunePointCommunicationsLocked()
-	if len(e.rawTasks) > 0 {
-		channels := map[string]bool{}
-		for _, c := range e.project.Channels {
-			channels[c.ID] = true
-		}
-		for key, job := range e.rawTasks {
-			if !channels[key.channel] {
-				job.cancel()
-				delete(e.rawTasks, key)
-			}
-		}
-	}
 	e.viewClock++
 	e.viewMetadata = e.viewClock
 	e.viewPoints = nil
@@ -99,7 +87,6 @@ func (e *Engine) View(request ViewRequest) View {
 		project := Project{Version: e.project.Version, Name: e.project.Name, Channels: make([]Channel, len(e.project.Channels))}
 		for i, c := range e.project.Channels {
 			c.Points = nil
-			c.RawTools = cloneRawTools(c.RawTools)
 			c.TransportDraft = cloneTransportDraft(c.TransportDraft)
 			c.Devices = append([]Device{}, c.Devices...)
 			for j := range c.Devices {

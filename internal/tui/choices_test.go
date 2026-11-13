@@ -148,7 +148,7 @@ func TestListenerChoicesComeFromTargetProcessAndKeepPort(t *testing.T) {
 func TestShortcutFocusAndInputScopes(t *testing.T) {
 	m := channelEditorModel()
 	m.key("shift-tab")
-	if m.configurationEditor.focus != len(m.configurationEditor.fields)-1 {
+	if m.configurationEditor.focus != configField(m.configurationEditor, "timeoutMs") {
 		t.Fatal("reverse traversal")
 	}
 	m.configurationEditor.focus = configField(m.configurationEditor, "name")
@@ -168,8 +168,12 @@ func TestShortcutFocusAndInputScopes(t *testing.T) {
 		t.Fatal("reverse page traversal")
 	}
 	m.key("f1")
+	if m.help {
+		t.Fatal("unlisted F1 shortcut opened help")
+	}
+	m.key("?")
 	if !m.help {
-		t.Fatal("F1 help")
+		t.Fatal("? did not open help")
 	}
 	m.key("end")
 	m.key("home")
@@ -189,6 +193,7 @@ func TestShortcutFocusAndInputScopes(t *testing.T) {
 func TestCustomBaudAndExistingMetadataArePreserved(t *testing.T) {
 	m := channelEditorModel()
 	e := m.configurationEditor
+	e.values[configField(e, "transport")] = "serial"
 	e.focus = configField(e, "baud")
 	for _, r := range "12345" {
 		m.key(string(r))
@@ -204,19 +209,44 @@ func TestCustomBaudAndExistingMetadataArePreserved(t *testing.T) {
 	}
 }
 
+func TestShortDialogsKeepErrorsAndSelectionVisible(t *testing.T) {
+	m := channelEditorModel()
+	editor := m.configurationEditor
+	editor.focus = configField(editor, "address")
+	editor.error = strings.Repeat("请检查监听地址 ", 10)
+	raw := m.render(60, 12)
+	screen := stripStyles(raw)
+	if !strings.Contains(screen, "错误 请检查监听地址") || !strings.Contains(raw, selected+"│ › ") {
+		t.Fatal(screen)
+	}
+
+	values := []string{"1", "2", "3", "4", "5", "6", "7", "8", "9"}
+	m.openChoices("选择地址", "address", "1", values, func(string) {})
+	m.render(60, 12)
+	m.key("pagedown")
+	screen = stripStyles(m.render(60, 12))
+	if m.picker.start != 4 || !strings.Contains(screen, "› 5") || !strings.Contains(screen, "  8") {
+		t.Fatal(screen)
+	}
+	m.key("esc")
+	if m.picker != nil || m.configurationEditor != editor {
+		t.Fatal("Escape did not return to the same draft")
+	}
+}
+
 func TestGlobalAndContextActionsRemainVisibleInNarrowTerminals(t *testing.T) {
 	m := editableModel()
 	for _, width := range []int{59, 89, 149} {
 		for view := 0; view < 7; view++ {
 			m.view = view
 			lines := strings.Split(stripStyles(m.render(width+1, 24)), "\r\n")
-			if !strings.Contains(lines[1], "[q]退出") || !strings.Contains(lines[1], "[?]帮助") || strings.Contains(lines[len(lines)-2], "[q]") {
+			if !strings.Contains(lines[4], "[q]退出") || !strings.Contains(lines[4], "[?]帮助") || strings.Contains(lines[1], "[q]") {
 				t.Fatal(width, view, lines)
 			}
-			if len(m.rows()) > 0 && !strings.Contains(lines[len(lines)-2], "[Enter]") {
+			if len(m.rows()) > 0 && !strings.Contains(lines[4], "[Enter]") {
 				t.Fatal("primary action hidden", width, view, lines)
 			}
-			for _, line := range []string{lines[1], lines[len(lines)-2]} {
+			for _, line := range []string{lines[1], lines[4]} {
 				if strings.Count(line, "[") != strings.Count(line, "]") {
 					t.Fatal("partial shortcut", width, view, line)
 				}
@@ -231,8 +261,29 @@ func TestGlobalAndContextActionsRemainVisibleInNarrowTerminals(t *testing.T) {
 		if !strings.Contains(line, "[Enter]") || !strings.Contains(line, "[Esc]") {
 			t.Fatal(width, line)
 		}
-		if header := m.globalHints(width); !strings.Contains(header, "[Ctrl+C]") || strings.Contains(header, "[q]") {
+		if header := m.actionHints(width); strings.Contains(header, "[q]") || strings.Contains(header, "[?]") {
 			t.Fatal("text input shows global letter shortcuts", header)
+		}
+	}
+}
+
+func TestShortcutColorsInMinimumSizeTerminal(t *testing.T) {
+	list := editableModel()
+	list.detail.ConfigurationOperations = true
+	list.detail.DeletionOperations = true
+	editor := channelEditorModel()
+	for _, tc := range []struct {
+		model model
+		hints []string
+	}{
+		{list, []string{yellow + "[e]" + shortcutDescriptionColor + "编辑", yellow + "[x]" + shortcutDescriptionColor + "删除", yellow + "[?]" + shortcutDescriptionColor + "帮助"}},
+		{editor, []string{yellow + "[Enter]" + shortcutDescriptionColor + "保存", yellow + "[Esc]" + shortcutDescriptionColor + "取消"}},
+	} {
+		line := strings.Split(tc.model.render(60, 12), "\r\n")[4]
+		for _, hint := range tc.hints {
+			if !strings.Contains(line, hint) {
+				t.Fatalf("missing shortcut color %q in %q", hint, line)
+			}
 		}
 	}
 }

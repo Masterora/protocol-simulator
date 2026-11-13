@@ -32,17 +32,9 @@ func (a *App) startup(ctx context.Context) {
 	}
 }
 func (a *App) domReady(ctx context.Context) {
-	a.windowReady.Do(func() {
-		if a.remote == nil {
-			runtime.WindowCenter(ctx)
-		} else {
-			makeEditorAccessory()
-			if c, err := a.GetNativeContext(); err == nil && c.Position != nil {
-				runtime.WindowSetPosition(ctx, c.Position.X, c.Position.Y)
-			}
-		}
-
-	})
+	if a.remote == nil {
+		a.windowReady.Do(func() { runtime.WindowCenter(ctx) })
+	}
 }
 
 func (a *App) shutdown(context.Context) {
@@ -202,15 +194,14 @@ func (a *App) SetPointValue(channelID, deviceID string, key core.PointKey, value
 func (a *App) Command104Device(channelID, deviceID string, r core.Control104Request) (core.Control104Result, error) {
 	return a.engine.Command104Device(channelID, deviceID, r)
 }
-func (a *App) StartChannel(id string) error            { return a.engine.Start(id) }
-func (a *App) StopChannel(id string)                   { a.engine.Stop(id) }
-func (a *App) StopAll()                                { a.engine.StopAll() }
-func (a *App) ClearMessages()                          { a.engine.ClearMessages() }
-func (a *App) ClearChannelMessages(id string)          { a.engine.ClearChannelMessages(id) }
-func (a *App) RenameChannel(id, name string) error     { return a.engine.RenameChannel(id, name) }
-func (a *App) SendHex(id, text string, crc bool) error { return a.engine.SendHex(id, text, crc) }
-func (a *App) Interrogate(id string) error             { return a.engine.Interrogate(id) }
-func (a *App) SerialPorts() ([]string, error)          { return core.SerialPorts() }
+func (a *App) StartChannel(id string) error        { return a.engine.Start(id) }
+func (a *App) StopChannel(id string)               { a.engine.Stop(id) }
+func (a *App) StopAll()                            { a.engine.StopAll() }
+func (a *App) ClearMessages()                      { a.engine.ClearMessages() }
+func (a *App) ClearChannelMessages(id string)      { a.engine.ClearChannelMessages(id) }
+func (a *App) RenameChannel(id, name string) error { return a.engine.RenameChannel(id, name) }
+func (a *App) Interrogate(id string) error         { return a.engine.Interrogate(id) }
+func (a *App) SerialPorts() ([]string, error)      { return core.SerialPorts() }
 func (a *App) LocalIPs() ([]string, error) {
 	return core.LocalIPv4(), nil
 }

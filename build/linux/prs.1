@@ -1,0 +1,83 @@
+.\" -*- coding: UTF-8 -*-
+.TH PRS 1 2026-11-11 "Protocol Simulator" "用户命令"
+.SH 名称
+prs \- 协议模拟器
+.SH 用法
+.SY prs
+.OP \-\-help
+.YS
+.SY prs
+.B help
+.RI [ 命令
+.RI [ 操作 ]]
+.YS
+.SY prs
+.I 命令
+.RI [ 参数 ]
+.YS
+.SH 命令
+.TP
+.B tui
+打开终端管理界面，连接同一用户下运行的工程。
+.TP
+.BI "run " 工程文件
+运行工程。默认启动全部通道并监视配置文件。使用
+.B \-\-start\-data\-rules
+启动已启用的自动规则，使用
+.B \-\-watch=false
+关闭热加载。
+.TP
+.BI "validate " 工程文件
+校验工程配置。添加
+.B \-\-json
+可输出 JSON 结果。
+.TP
+.B inspect
+以 JSON 只读查看运行工程、通道、装置和近期日志。
+.TP
+.B "master [interrogate|read|write]"
+发送 IEC104 总召唤，或读取和写入 Modbus 点位。
+.TP
+.B "project [new|edit|delete]"
+新建、编辑或删除工程。
+.TP
+.B "channel [add|edit|delete|start|stop]"
+新增、编辑、删除、启动或停止通道。
+.TP
+.B "device [add|edit|delete]"
+新增、编辑或删除装置。
+.TP
+.B "point [add|edit|delete|set|report]"
+新增、编辑或删除点位，修改点值或品质，或立即上报 IEC104 点值。
+.TP
+.B "rule [add|edit|delete]"
+新增、编辑或删除自动规则。
+.TP
+.B "ports [\-\-json]"
+列出串口。添加
+.B \-\-json
+可输出 JSON 数组。
+.TP
+.B version
+显示版本，也可使用
+.BR "prs \-\-version" 。
+.SH 命令帮助
+直接运行
+.B prs
+查看命令列表。只输入命令组可查看该组操作。
+查看具体操作的语法、选项和默认值时，使用
+.B "prs help 命令 操作"
+或
+.BR "prs 命令 操作 \-\-help" 。
+.SH 示例
+.nf
+prs channel
+prs help run
+prs help point report
+prs validate gateway.json \-\-json
+prs run gateway.json \-\-start\-data\-rules
+prs tui
+.fi
+.SH 另见
+.BR systemctl (1),
+.BR journalctl (1)

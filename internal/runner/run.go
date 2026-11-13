@@ -180,7 +180,7 @@ func forwardMessage(sink *logSink, message core.Message) {
 func dataPlans(engine *core.Engine, channels []core.Channel) ([]dataPlan, error) {
 	var plans []dataPlan
 	for _, c := range channels {
-		if c.Role != "server" || c.Protocol == "raw" {
+		if c.Role != "server" {
 			continue
 		}
 		for _, d := range c.Devices {

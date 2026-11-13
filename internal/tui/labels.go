@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -19,13 +20,13 @@ func translated(value string, labels map[string]string) string {
 }
 
 var stateLabels = map[string]string{"disabled": "已停用", "running": "运行中", "stopped": "已停止", "paused": "已暂停", "listening": "监听中", "connecting": "连接中", "connected": "已连接", "disconnected": "已断开", "error": "异常", "waiting": "等待中", "": "未启动"}
-var transportLabels = map[string]string{"tcp-server": "TCP Server", "tcp-client": "TCP Client", "serial": "串口", "udp": "UDP", "": "—"}
+var transportLabels = map[string]string{"tcp-server": "TCP Server", "tcp-client": "TCP Client", "serial": "串口", "": "—"}
 
 func addressLabel(transport string) string {
 	switch transport {
 	case "tcp-server":
 		return "监听地址"
-	case "tcp-client", "udp":
+	case "tcp-client":
 		return "目标地址"
 	case "serial":
 		return "串口路径"
@@ -35,7 +36,7 @@ func addressLabel(transport string) string {
 }
 
 var roleLabels = map[string]string{"server": "子站", "client": "主站", "": "—"}
-var kindLabels = map[string]string{"yx": "遥信", "yc": "遥测", "yk": "遥控", "yt": "遥调", "mc": "累计量", "position": "步位置", "step": "步调节", "coil": "线圈", "discrete": "离散输入", "holding": "保持寄存器", "input": "输入寄存器", "raw": "原始数据"}
+var kindLabels = map[string]string{"yx": "遥信", "yc": "遥测", "yk": "遥控", "yt": "遥调", "mc": "累计量", "position": "步位置", "step": "步调节", "coil": "线圈", "discrete": "离散输入", "holding": "保持寄存器", "input": "输入寄存器"}
 var modeLabels = map[string]string{"fixed": "固定", "random": "随机", "increment": "递增", "toggle": "翻转", "sequence": "序列", "report": "仅上报", "normal": "正常应答", "deny": "拒绝应答", "silent": "不应答"}
 var levelLabels = map[string]string{"INFO": "信息", "WARN": "警告", "ERROR": "错误", "DEBUG": "调试", "TRACE": "跟踪"}
 var directionLabels = map[string]string{"RX": "接收", "TX": "发送", "SYS": "系统"}
@@ -76,9 +77,6 @@ func localizedDetail(value any, key string) any {
 				}
 				if k == "localAddress" {
 					label = "本地绑定"
-					if transport == "udp" {
-						label = "监听地址"
-					}
 				}
 			}
 			out[label] = localizedDetail(child, k)
@@ -119,7 +117,7 @@ func localizedDetail(value any, key string) any {
 	}
 	return value
 }
-func detailJSONLines(data any) []string {
+func formatDetailLines(data any) []string {
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return []string{"无法显示详情：" + err.Error()}
@@ -130,11 +128,56 @@ func detailJSONLines(data any) []string {
 	if err = decoder.Decode(&v); err != nil {
 		return []string{"无法读取详情：" + err.Error()}
 	}
-	raw, err = json.MarshalIndent(localizedDetail(v, ""), "", "  ")
-	if err != nil {
-		return []string{"无法显示详情：" + err.Error()}
+	var lines []string
+	appendDetailFields(&lines, "", "", localizedDetail(v, ""))
+	return lines
+}
+
+var detailOrder = []string{
+	"工程", "名称", "进程号", "配置文件", "启动时间", "协议", "角色", "连接方式",
+	"监听地址", "目标地址", "串口路径", "地址", "站号", "公共地址", "标识",
+	"时间", "方向", "对端", "通道标识", "摘要", "级别", "事件", "字段",
+	"状态", "点位", "类型", "模式", "周期（毫秒）", "执行次数",
+}
+
+func appendDetailFields(lines *[]string, indent, label string, value any) {
+	switch data := value.(type) {
+	case map[string]any:
+		if label != "" {
+			*lines = append(*lines, indent+label)
+			indent += "  "
+		}
+		for _, key := range detailOrder {
+			if child, ok := data[key]; ok {
+				appendDetailFields(lines, indent, key, child)
+			}
+		}
+		keys := make([]string, 0, len(data))
+		for key := range data {
+			if !slices.Contains(detailOrder, key) {
+				keys = append(keys, key)
+			}
+		}
+		slices.Sort(keys)
+		for _, key := range keys {
+			appendDetailFields(lines, indent, key, data[key])
+		}
+	case []any:
+		if len(data) == 0 {
+			*lines = append(*lines, indent+label+"：—")
+			return
+		}
+		*lines = append(*lines, indent+label)
+		for i, child := range data {
+			appendDetailFields(lines, indent+"  ", fmt.Sprint(i+1), child)
+		}
+	default:
+		text := fmt.Sprint(value)
+		if text == "" {
+			text = "—"
+		}
+		*lines = append(*lines, indent+label+"："+text)
 	}
-	return strings.Split(string(raw), "\n")
 }
 func connectionMessage(err error) string {
 	if errors.Is(err, os.ErrNotExist) {

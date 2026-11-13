@@ -76,7 +76,6 @@ const names = {
   iec104: 'IEC104',
   'modbus-tcp': 'Modbus TCP',
   'modbus-rtu': 'Modbus RTU',
-  raw: 'RAW',
 };
 const kinds = {
   mc: '脉冲',
@@ -150,24 +149,21 @@ const current = () => {
 const draftKey = () =>
   selected +
   '/' +
-  (selectedDevice || 'raw') +
+  (selectedDevice || '') +
   '/' +
   ($('protocol-actions').dataset.category || $('point-kind').value);
 function normalizeSnapshot() {
   for (const c of snapshot.project.channels) {
     if (!Array.isArray(c.devices))
-      c.devices =
-        c.protocol === 'raw'
-          ? []
-          : [
-              {
-                id: 'device-1',
-                name: '装置 1',
-                unit: c.unit,
-                commonAddress: c.commonAddress,
-                points: c.points || [],
-              },
-            ];
+      c.devices = [
+        {
+          id: 'device-1',
+          name: '装置 1',
+          unit: c.unit,
+          commonAddress: c.commonAddress,
+          points: c.points || [],
+        },
+      ];
   }
 }
 const state = () =>
@@ -361,7 +357,7 @@ async function refresh(force = false) {
         projectIdentity = identity;
         const valid = new Set(
           snapshot.project.channels.flatMap((c) => [
-            c.id + '/raw',
+            c.id + '/',
             ...c.devices.map((d) => c.id + '/' + d.id),
           ]),
         );
@@ -647,12 +643,6 @@ function renderControls() {
     '#channel-form button[type=submit],#point-form button[type=submit],#device-form button[type=submit],#remote-config-form button[type=submit],#telemetry-values-form button[type=submit]',
   ))
     button.disabled = locked;
-  const raw = c?.protocol === 'raw';
-  $('raw-form').hidden = !raw;
-  $('raw-hex').disabled = locked || !raw;
-  $('raw-format').disabled = locked || !raw;
-  $('append-crc').disabled = locked || !raw;
-  $('raw-form').querySelector('button').disabled = locked || !raw || !online;
   $('export-messages').disabled = locked || !snapshot.messages.length;
   $('clear-messages').disabled = locked || (!snapshot.messages.length && !frozen.length);
   if ($('telemetry-values-dialog').open) updateTelemetryFields();
@@ -973,9 +963,6 @@ function saveDraft() {
   if (!selected) return;
   const data = { ...(drafts.get(draftKey()) || {}) };
   for (const el of $('protocol-actions').querySelectorAll('input,select')) data[el.id] = el.value;
-  data.hex = $('raw-hex').value;
-  data.crc = $('append-crc').checked;
-  data.rawFormat = $('raw-format').value;
   drafts.set(draftKey(), data);
 }
 function renderActions(c) {
@@ -1047,10 +1034,6 @@ function renderActions(c) {
   const draft = drafts.get(draftKey()) || {};
   for (const el of box.querySelectorAll('input,select'))
     if (draft[el.id] !== undefined) el.value = draft[el.id];
-  $('raw-hex').value = draft.hex || '';
-  $('append-crc').checked = !!draft.crc;
-  $('raw-format').value = draft.rawFormat || 'hex';
-  updateRawFormat();
   if ($('read-clock'))
     on('read-clock', 'click', () => act('ReadClockDevice', selected, selectedDevice));
   if ($('counter-interrogate'))
@@ -1210,7 +1193,7 @@ function pointCategory(p) {
 function renderPointTabs(c) {
   const ranges = device()?.configuration?.ranges,
     types =
-      !c || !device() || c.protocol === 'raw'
+      !c || !device()
         ? []
         : ['yx', 'yc', 'yk', 'yt'].map((k) => (ranges?.some((r) => r.tab === k) ? 'tab:' + k : k));
   const previous = $('point-kind').value;
@@ -1816,7 +1799,6 @@ function originalControl(host, id) {
 const networkEnabled = new Set([
   'rbCom',
   'rbTcp',
-  'rbUDP',
   'rbClient',
   'rbServer',
   'cbComList',
@@ -1880,12 +1862,11 @@ async function loadNetworkChoices() {
 const transportNames = {
   'tcp-client': 'TCP Client',
   'tcp-server': 'TCP Server',
-  udp: 'UDP',
   serial: '串口',
 };
 function addressLabel(transport) {
   if (transport === 'tcp-server') return '监听地址';
-  if (transport === 'tcp-client' || transport === 'udp') return '目标地址';
+  if (transport === 'tcp-client') return '目标地址';
   if (transport === 'serial') return '串口路径';
   return '地址';
 }
@@ -1918,7 +1899,6 @@ function channelDialog(edit = true) {
     ...c.transportDraft,
     rbCom: c.transport === 'serial',
     rbTcp: c.transport.startsWith('tcp'),
-    rbUDP: c.transport === 'udp',
     rbClient: c.transport !== 'tcp-server',
     rbServer: c.transport === 'tcp-server',
   };
@@ -1930,12 +1910,7 @@ function channelDialog(edit = true) {
     v.txtClientIP = host;
     v.txtClientPort = port;
   }
-  if (c.transport === 'udp') {
-    v.cbxServerIP = c.localAddress ? (local === '0.0.0.0' ? 'Any' : local) : '127.0.0.1';
-    v.txtServerPort = c.localAddress ? localPort : '0';
-    v.rbServer = c.transportDraft?.rbServer === 'true';
-    v.rbClient = !v.rbServer;
-  } else if (c.transport === 'tcp-client' && c.localAddress) {
+  if (c.transport === 'tcp-client' && c.localAddress) {
     v.ck_AssignIpPort = true;
     v.cb_ClientAssignIp = local;
     v.txt_ClientAssignPort = localPort;
@@ -1972,32 +1947,29 @@ function updateChannelFields() {
   if (!host.children.length) return;
   const get = (id) => originalControl(host, id),
     com = get('rbCom').checked,
-    udp = get('rbUDP').checked,
     server = get('rbServer').checked;
-  const bind = !com && !udp && !server && get('ck_AssignIpPort').checked;
+  const bind = !com && !server && get('ck_AssignIpPort').checked;
   for (const [id, label] of [
     ['rbClient', 'TCP Client'],
     ['rbServer', 'TCP Server'],
   ]) {
     const wrapper = get(id).closest('label');
-    wrapper.hidden = com || udp;
+    wrapper.hidden = com;
     wrapper.lastChild.textContent = label;
   }
   const addressCaption = field($('channel-form'), 'address').closest('label').querySelector('span');
-  addressCaption.textContent = addressLabel(
-    com ? 'serial' : udp ? 'udp' : server ? 'tcp-server' : 'tcp-client',
-  );
+  addressCaption.textContent = addressLabel(com ? 'serial' : server ? 'tcp-server' : 'tcp-client');
 
   for (const id of ['cbComList', 'cbBaudRate', 'cbDataBit', 'cbParity', 'cbStopBit'])
     get(id).disabled = !com;
   get('rbClient').disabled = com;
   get('rbServer').disabled = com;
-  get('ck_AssignIpPort').disabled = com || udp || server;
+  get('ck_AssignIpPort').disabled = com || server;
   for (const [id, enabled, port] of [
-    ['txtClientIP', !com && (!server || udp), false],
-    ['txtClientPort', !com && (!server || udp), true],
-    ['cbxServerIP', !com && (server || udp), false],
-    ['txtServerPort', !com && (server || udp), true],
+    ['txtClientIP', !com && !server, false],
+    ['txtClientPort', !com && !server, true],
+    ['cbxServerIP', !com && server, false],
+    ['txtServerPort', !com && server, true],
     ['cb_ClientAssignIp', bind, false],
     ['txt_ClientAssignPort', bind, true],
   ]) {
@@ -2017,7 +1989,7 @@ function updateChannelFields() {
     linked = active(st);
   host.querySelector('[data-group-id="groupBoxEx2"]').hidden = !com;
   host.querySelector('[data-group-id="groupBoxEx3"]').hidden = com;
-  host.querySelector('[data-group-id="groupControl1"]').hidden = com || udp || server;
+  host.querySelector('[data-group-id="groupControl1"]').hidden = com || server;
   for (const id of ['txtClientIP', 'txtClientPort', 'cbxServerIP', 'txtServerPort'])
     get(id).closest('label').hidden = com || get(id).disabled;
   $('network-port-status').hidden = !com;
@@ -2063,7 +2035,8 @@ on('add-channel', 'click', async () => {
   }
   const c = {
     name,
-    protocol: 'raw',
+    protocol: 'iec104',
+    devices: [],
     role,
     transport: role === 'server' ? 'tcp-server' : 'tcp-client',
     address: (role === 'server' ? listenIP : '127.0.0.1') + ':2404',
@@ -2093,9 +2066,8 @@ on('channel-form', 'submit', async (e) => {
   if (!c) throw Error('通道已被移除');
   const v = globalThis.readOriginalForm($('original-network-panel')),
     com = v.rbCom,
-    udp = v.rbUDP,
-    server = !com && !udp && v.rbServer;
-  const transport = com ? 'serial' : udp ? 'udp' : server ? 'tcp-server' : 'tcp-client';
+    server = !com && v.rbServer;
+  const transport = com ? 'serial' : server ? 'tcp-server' : 'tcp-client';
   const data = {
     ...c,
     transport,
@@ -2106,9 +2078,8 @@ on('channel-form', 'submit', async (e) => {
           server ? v.txtServerPort : v.txtClientPort,
           server,
         ),
-    localAddress: udp
-      ? endpoint(v.cbxServerIP, v.txtServerPort, true)
-      : !com && !server && v.ck_AssignIpPort
+    localAddress:
+      !com && !server && v.ck_AssignIpPort
         ? endpoint(v.cb_ClientAssignIp, v.txt_ClientAssignPort, true)
         : '',
     baud: Number(v.cbBaudRate),
@@ -2379,8 +2350,10 @@ for (const event of ['input', 'change'])
 function fillDeviceVersions(group, value) {
   const versions =
     group === 'iec104' ? ['标准版'] : group === 'modbus' ? ['标准版(RTU)', 'TCP版'] : [];
-  $('device-version').innerHTML = versions.map((v) => `<option >${v}</option>`).join('');
-  $('device-version').value = versions.includes(value) ? value : versions[0] || '';
+  const control = $('device-version');
+  control.innerHTML = versions.map((v) => `<option>${v}</option>`).join('');
+  control.value = versions.includes(value) ? value : versions[0] || '';
+  control.closest('label').hidden = versions.length < 2;
 }
 function deviceDialog(edit = false) {
   const c = channel(),
@@ -2406,17 +2379,16 @@ function deviceDialog(edit = false) {
   f.deviceSourceRanges = cloneBridgeData(d?.configuration?.ranges || []);
   f.deviceInitial = d ? JSON.stringify(d.configuration) : null;
   const suffix = stationMode === 'server' ? '子站' : '主站';
-  $('device-dialog-title').textContent = edit ? '装置配置' : suffix + '增加装置';
-  $('device-protocol').innerHTML =
-    '<option value="">请选择</option>' +
-    [
-      ['iec104', '104' + suffix],
-      ['modbus', 'Modbus' + suffix],
-    ]
-      .map(([key, name]) => `<option value="${key}" >${name}</option>`)
-      .join('');
+  $('device-dialog-title').textContent = edit ? '装置配置' : suffix + '新增装置';
+  $('device-protocol').innerHTML = [
+    ['iec104', 'IEC104'],
+    ['modbus', 'Modbus'],
+  ]
+    .map(([key, name]) => `<option value="${key}">${name}</option>`)
+    .join('');
   const saved = deviceWindowCache.get(stationMode),
-    group = edit ? (c.protocol === 'iec104' ? 'iec104' : 'modbus') : saved?.group || 'iec104';
+    useModbus = edit ? c.protocol !== 'iec104' : saved?.group === 'modbus',
+    group = useModbus ? 'modbus' : 'iec104';
   const version = edit
     ? c.protocol === 'iec104'
       ? '标准版'
@@ -2703,6 +2675,7 @@ on('device-form', 'submit', async (e) => {
     $('device-dialog').close();
     return;
   }
+  const preview = devicePointPreview(configuration, protocol);
   let replace = false;
   const replace104 =
       protocol === 'iec104' && c.protocol === 'iec104' && !f.dataset.device && c.devices.length > 0,
@@ -2720,7 +2693,6 @@ on('device-form', 'submit', async (e) => {
       return;
     replace = !!c.devices.length;
   }
-  const preview = devicePointPreview(configuration, field(f, 'protocol').value);
   if (preview.removed > 0 && !replace) {
     if (
       !(await confirmAction(
@@ -2947,31 +2919,6 @@ function removeChannel() {
 on('toggle-channel', 'click', () => {
   const id = selected;
   return act(active(state()) ? 'StopChannel' : 'StartChannel', id);
-});
-function updateRawFormat() {
-  const label = $('raw-format').value === 'text' ? 'UTF-8文本' : '十六进制报文';
-  $('raw-hex').placeholder = label;
-  $('raw-hex').setAttribute('aria-label', label);
-}
-on('raw-format', 'change', () => {
-  updateRawFormat();
-  saveDraft();
-});
-on('raw-form', 'submit', async (e) => {
-  e.preventDefault();
-  const id = selected,
-    text = $('raw-hex').value;
-  if ($('raw-format').value === 'text' ? text.length === 0 : !text.trim()) {
-    $('raw-hex').focus();
-    throw Error($('raw-format').value === 'text' ? '请输入文本报文' : '请输入十六进制报文');
-  }
-  saveDraft();
-  await act(
-    $('raw-format').value === 'text' ? 'SendRawText' : 'SendHex',
-    id,
-    text,
-    $('append-crc').checked,
-  );
 });
 for (const id of ['point-search', 'point-kind'])
   on(
@@ -3691,14 +3638,8 @@ function renderManager() {
         Object.entries(transportNames),
       );
       managerField(row, row.children[2], c, 'address', addressLabel(c.transport));
-      const local = managerField(
-        row,
-        row.children[2],
-        c,
-        'localAddress',
-        c.transport === 'udp' ? '监听地址（可留空）' : '本地绑定（可留空）',
-      );
-      local.closest('label').hidden = !['tcp-client', 'udp'].includes(c.transport);
+      const local = managerField(row, row.children[2], c, 'localAddress', '本地绑定（可留空）');
+      local.closest('label').hidden = c.transport !== 'tcp-client';
       for (const [key, label, options] of [
         ['baud', '波特率', null],
         [
@@ -3843,7 +3784,6 @@ const desktopFeatures = globalThis.createDesktopFeatures({
   refresh,
   channel: () => selected,
   device: () => selectedDevice,
-  protocol: () => channel()?.protocol,
   kind: () => $('point-kind').value,
   error: report,
 });
@@ -3868,7 +3808,7 @@ for (const [id, formID] of [
 // Native windows use normal document flow inside their own WebView. No DOM
 // overlay is opened in the main workspace.
 function installNativeDialogs() {
-  for (const dialog of document.querySelectorAll('dialog')) {
+  for (const dialog of document.querySelectorAll('dialog:not(#field-tools-dialog)')) {
     const show = () => {
       if (nativeContext?.kind) {
         dialog.setAttribute('open', '');
@@ -3951,7 +3891,7 @@ async function initializeDesktop() {
           renderEvents();
         } else if (c.kind === 'auto-bulk-dialog') $('auto-bulk-dialog').show();
         else if (c.kind === 'confirm-dialog') ask(c.ask);
-        else if (['point-table-dialog', 'packet-tools-dialog', 'toolbox-dialog'].includes(c.kind))
+        else if (['point-table-dialog', 'toolbox-dialog'].includes(c.kind))
           await desktopFeatures.initialize(c.kind);
         else {
           $(c.kind).show();
@@ -3959,6 +3899,7 @@ async function initializeDesktop() {
         }
         if (!$(c.kind).open) throw Error('配置目标已不存在，请重新打开窗口');
         document.body.style.visibility = 'visible';
+        await window.go.main.App.PresentNativeEditor();
         // Signal readiness after WebKit has laid out the visible native editor.
         await configWindowFit;
         await new Promise((resolve) => requestAnimationFrame(resolve));
@@ -4057,6 +3998,8 @@ async function initializeDesktop() {
       await refresh();
     }
   } catch (error) {
+    document.body.style.visibility = 'visible';
+    if (nativeContext?.kind) await window.go.main.App.PresentNativeEditor().catch(() => {});
     report(error);
   }
   document.body.style.visibility = 'visible';

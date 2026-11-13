@@ -1,9 +1,8 @@
 package core
 
 import (
+	"encoding/binary"
 	"encoding/json"
-	"fmt"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -293,7 +292,7 @@ func TestOnlineCommunicationEditsStopUntilManualConnect(t *testing.T) {
 	_ = second.(*net.TCPListener).SetDeadline(time.Now().Add(3 * time.Second))
 	e := NewEngine()
 	defer e.StopAll()
-	id, err := e.UpsertChannel(Channel{Name: "online", Protocol: "raw", Role: "client", Transport: "tcp-client", Address: first.Addr().String(), TimeoutMS: 300})
+	id, err := e.UpsertChannel(Channel{Name: "online", Protocol: "modbus-tcp", Unit: 1, Points: []Point{{Kind: "holding", Address: 0}}, Role: "client", Transport: "tcp-client", Address: first.Addr().String(), TimeoutMS: 300})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,17 +321,24 @@ func TestOnlineCommunicationEditsStopUntilManualConnect(t *testing.T) {
 	}
 	defer current.Close()
 	waitConnected(t, e, id)
-	if err = e.SendHex(id, "0102", false); err != nil {
-		t.Fatal(err)
+	readOnCurrent := func() {
+		t.Helper()
+		if err := e.ReadModbus(id, 3, 0, 1); err != nil {
+			t.Fatal(err)
+		}
+		_ = current.SetReadDeadline(time.Now().Add(time.Second))
+		request, err := ReadModbusTCP(current)
+		if err != nil || len(request) != 12 || request[7] != 3 {
+			t.Fatalf("new endpoint not used: %x %v", request, err)
+		}
+		if _, err = current.Write(EncodeTCP(binary.BigEndian.Uint16(request), 1, []byte{3, 2, 0, 9})); err != nil {
+			t.Fatal(err)
+		}
 	}
-	_ = current.SetReadDeadline(time.Now().Add(time.Second))
-	buf := make([]byte, 2)
-	n, err := io.ReadFull(current, buf)
-	if err != nil || n != 2 || buf[1] != 2 {
-		t.Fatalf("new endpoint not used: %x %v", buf, err)
-	}
+	readOnCurrent()
+	eventually(t, func() bool { return e.Snapshot().Project.Channels[0].Points[0].Value == 9 })
 	_ = old.SetReadDeadline(time.Now().Add(time.Second))
-	if _, err = old.Read(buf); err == nil {
+	if _, err = old.Read(make([]byte, 1)); err == nil {
 		t.Fatal("old connection survived")
 	}
 	invalid := config
@@ -343,9 +349,7 @@ func TestOnlineCommunicationEditsStopUntilManualConnect(t *testing.T) {
 	if e.Snapshot().Project.Channels[0].Address != config.Address {
 		t.Fatal("invalid edit changed live endpoint")
 	}
-	if err = e.SendHex(id, "03", false); err != nil {
-		t.Fatal("invalid edit stopped old connection:", err)
-	}
+	readOnCurrent()
 }
 func TestOnlineServerEditsStopListenerAndKeepDeviceData(t *testing.T) {
 	e := NewEngine()
@@ -395,7 +399,7 @@ func TestCommunicationEditsStopRetryUntilManualConnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer listener.Close()
-	id, err := e.UpsertChannel(Channel{Name: "retry", Protocol: "raw", Role: "client", Transport: "tcp-client", Address: listener.Addr().String(), TimeoutMS: 100})
+	id, err := e.UpsertChannel(Channel{Name: "retry", Protocol: "modbus-tcp", Devices: []Device{}, Role: "client", Transport: "tcp-client", Address: listener.Addr().String(), TimeoutMS: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +463,7 @@ func TestTransportDraftSurvivesProjectRoundTripWithoutSharingMaps(t *testing.T) 
 
 func TestTransportEditorPreservesConcurrentDeviceAndPointChanges(t *testing.T) {
 	e := NewEngine()
-	id, err := e.UpsertChannel(Channel{Name: "before", Protocol: "raw", Role: "client", Transport: "tcp-client", Address: "127.0.0.1:2404"})
+	id, err := e.UpsertChannel(Channel{Name: "before", Protocol: "modbus-tcp", Devices: []Device{}, Role: "client", Transport: "tcp-client", Address: "127.0.0.1:2404"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -493,7 +497,7 @@ func TestTransportEditorPreservesConcurrentDeviceAndPointChanges(t *testing.T) {
 func TestServerCommunicationEditSavesUnavailableBindWithoutStarting(t *testing.T) {
 	e := NewEngine()
 	defer e.StopAll()
-	id, err := e.UpsertChannel(Channel{Name: "server", Protocol: "raw", Role: "server", Transport: "tcp-server", Address: "127.0.0.1:0"})
+	id, err := e.UpsertChannel(Channel{Name: "server", Protocol: "modbus-tcp", Devices: []Device{}, Role: "server", Transport: "tcp-server", Address: "127.0.0.1:0"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -517,43 +521,6 @@ func TestServerCommunicationEditSavesUnavailableBindWithoutStarting(t *testing.T
 	}
 	if e.Snapshot().States[0].Status != "stopped" {
 		t.Fatal("save restarted failed channel")
-	}
-}
-
-func TestUDPUsesConfiguredLocalPort(t *testing.T) {
-	remote, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer remote.Close()
-	reserve, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := reserve.LocalAddr().(*net.UDPAddr).Port
-	reserve.Close()
-	e := NewEngine()
-	defer e.StopAll()
-	id, err := e.UpsertChannel(Channel{Name: "UDP", Protocol: "raw", Role: "client", Transport: "udp", Address: remote.LocalAddr().String(), LocalAddress: fmt.Sprintf("0.0.0.0:%d", port)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = e.Start(id); err != nil {
-		t.Fatal(err)
-	}
-	if err = e.SendHex(id, "010203", false); err != nil {
-		t.Fatal(err)
-	}
-	if err = remote.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	buffer := make([]byte, 16)
-	n, from, err := remote.ReadFromUDP(buffer)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if from.Port != port || n != 3 || buffer[0] != 1 {
-		t.Fatalf("UDP binding not used: %v %x", from, buffer[:n])
 	}
 }
 
@@ -683,5 +650,35 @@ func TestFailedSavePreservesNamePathAndDirtyState(t *testing.T) {
 		if !reflect.DeepEqual(e.Snapshot(), before) {
 			t.Fatal("failed save changed current project")
 		}
+	}
+}
+
+func TestLegacyEmptyChannelsLoadWithoutRestoringRawMode(t *testing.T) {
+	project := Project{Version: 2, Name: "legacy", Channels: []Channel{
+		{ID: "tcp", Name: "old TCP", Protocol: "raw", Role: "server", Transport: "tcp-server", Address: "127.0.0.1:2404", Devices: []Device{}},
+		{ID: "serial", Name: "old serial", Protocol: "raw", Role: "client", Transport: "serial", Address: "/dev/ttyUSB0", Devices: []Device{}},
+	}}
+	data, err := json.Marshal(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := ParseProject(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []string{"iec104", "modbus-rtu"} {
+		before, after := project.Channels[i], loaded.Channels[i]
+		if after.Protocol != want || after.Address != before.Address || after.Role != before.Role || len(after.Devices) != 0 {
+			t.Fatal(after)
+		}
+	}
+	e := NewEngine()
+	if _, err = e.UpsertChannel(project.Channels[0]); err == nil {
+		t.Fatal("retired protocol can still be created")
+	}
+	project.Channels[0].Transport = "udp"
+	data, _ = json.Marshal(project)
+	if _, err = ParseProject(data); err == nil {
+		t.Fatal("retired transport was silently remapped")
 	}
 }

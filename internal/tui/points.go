@@ -59,8 +59,6 @@ func pointKinds(protocol string, counts map[string]int) []string {
 	kinds := []string{"yx", "yc", "yk", "yt"}
 	if strings.HasPrefix(protocol, "modbus") {
 		kinds = []string{"holding", "input", "coil", "discrete"}
-	} else if protocol == "raw" {
-		kinds = []string{"raw"}
 	}
 	var extra []string
 	for kind := range counts {
@@ -92,6 +90,9 @@ func (m *model) switchPointKind(step int) {
 		return
 	}
 	kinds := m.pointKinds()
+	if len(kinds) < 2 {
+		return
+	}
 	index := 0
 	for i, k := range kinds {
 		if k == m.pointKind {
@@ -100,12 +101,38 @@ func (m *model) switchPointKind(step int) {
 		}
 	}
 	m.pointKind = kinds[(index+step+len(kinds))%len(kinds)]
-	m.pointOffset, m.cursor = 0, 0
 	m.filter = ""
+	m.detail.View.PointMatches = 0
+	m.changePointPage(0)
+}
+
+func (m *model) changePointPage(offset int) {
+	m.pointOffset, m.cursor, m.listStart = offset, 0, 0
+	m.pointTarget, m.pointStart = 0, 0
+	m.pointLoading = true
 	// A scope change must not display the previous kind's data.
 	m.detail.View.Points = nil
 	m.detail.View.PointBindings = nil
-	m.detail.View.PointMatches = 0
+}
+
+func (m *model) pointRowCount() int {
+	return max(m.detail.View.PointMatches, m.pointOffset+len(m.detail.View.Points))
+}
+
+func (m *model) movePointCursor(target int) {
+	if m.pointLoading || m.pointRowCount() == 0 {
+		return
+	}
+	target = min(max(0, target), m.pointRowCount()-1)
+	offset := target / core.PointPageSize * core.PointPageSize
+	if offset != m.pointOffset {
+		visiblePosition := m.cursor - m.listStart
+		m.changePointPage(offset)
+		m.pointTarget = target - offset
+		m.pointStart = max(0, m.pointTarget-visiblePosition)
+		return
+	}
+	m.cursor = target - offset
 }
 
 func pointProtocol(info observe.Info, channel string) string {
@@ -196,8 +223,8 @@ func legacyPointPage(query url.Values, info observe.Info, fetchPage func(int) (o
 	points := &pointHeap{}
 	matches := 0
 	total := first.View.PointMatches
-	limit := min(offset, total) + 100
-	for page, scan := first, 0; ; scan += 100 {
+	limit := min(offset, total) + core.PointPageSize
+	for page, scan := first, 0; ; scan += core.PointPageSize {
 		if scan > 0 {
 			page, err = fetchPage(scan)
 			if err != nil {
@@ -249,7 +276,7 @@ func legacyPointPage(query url.Values, info observe.Info, fetchPage func(int) (o
 	}
 	sort.Slice(*points, func(i, j int) bool { return pointLess((*points)[i], (*points)[j]) })
 	start := min(offset, points.Len())
-	info.View.Points = append([]core.Point(nil), (*points)[start:min(start+100, points.Len())]...)
+	info.View.Points = append([]core.Point(nil), (*points)[start:min(start+core.PointPageSize, points.Len())]...)
 	info.View.PointMatches, info.View.PointKinds = matches, counts
 	return info, kind, nil
 }

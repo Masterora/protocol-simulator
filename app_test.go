@@ -18,7 +18,7 @@ import (
 
 func TestDirtyApplicationClosesWithoutConfirmationAndStopsChannels(t *testing.T) {
 	a := NewApp()
-	id, err := a.engine.UpsertChannel(core.Channel{Name: "waiting", Protocol: "raw", Role: "client", Transport: "tcp-client", Address: "192.0.2.1:2425", TimeoutMS: 30000})
+	id, err := a.engine.UpsertChannel(core.Channel{Name: "waiting", Protocol: "modbus-tcp", Devices: []core.Device{}, Role: "client", Transport: "tcp-client", Address: "192.0.2.1:2425", TimeoutMS: 30000})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func TestNewProjectOpensIsolatedWorkspaceAndPreservesLiveOriginal(t *testing.T) 
 		t.Run(role, func(t *testing.T) {
 			original := NewApp()
 			t.Cleanup(original.engine.StopAll)
-			id, err := original.engine.UpsertChannel(core.Channel{Name: "old", Protocol: "raw", Role: "server", Transport: "tcp-server", Address: "127.0.0.1:0"})
+			id, err := original.engine.UpsertChannel(core.Channel{Name: "old", Protocol: "modbus-tcp", Devices: []core.Device{}, Role: "server", Transport: "tcp-server", Address: "127.0.0.1:0"})
 			if err != nil {
 				t.Fatal(err)
 			}

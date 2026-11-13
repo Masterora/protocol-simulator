@@ -8,15 +8,14 @@ package main
 #import <AppKit/AppKit.h>
 #import <dispatch/dispatch.h>
 
-static void makeEditorAccessory(void) {
+static void presentEditorWindow(void) {
     // Wails registers every process as a regular application during launch.
-    // Apply this after the WebView loads, on AppKit's main thread.
+    // Keep the window hidden until its content is ready and set the policy
+    // before ordering it front for the first time.
     dispatch_async(dispatch_get_main_queue(), ^{
         NSWindow *window = NSApp.keyWindow ?: NSApp.mainWindow;
         if (!window) window = NSApp.windows.firstObject;
         [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
-        // Changing policy can order the existing window out. Restore it so
-        // keyboard focus and WebKit animation/layout callbacks keep working.
         [window makeKeyAndOrderFront:nil];
         [NSApp activateIgnoringOtherApps:YES];
     });
@@ -24,4 +23,4 @@ static void makeEditorAccessory(void) {
 */
 import "C"
 
-func makeEditorAccessory() { C.makeEditorAccessory() }
+func presentEditorWindow() { C.presentEditorWindow() }

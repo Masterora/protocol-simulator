@@ -43,14 +43,13 @@ type Device struct {
 }
 
 type Channel struct {
-	RawTools       *RawToolsConfig   `json:"rawTools,omitempty"`
 	TransportDraft map[string]string `json:"transportDraft,omitempty"`
 	Devices        []Device          `json:"devices"`
 	ID             string            `json:"id"`
 	Name           string            `json:"name"`
-	Protocol       string            `json:"protocol"`  // raw, modbus-tcp, modbus-rtu, iec104
+	Protocol       string            `json:"protocol"`  // modbus-tcp, modbus-rtu, iec104
 	Role           string            `json:"role"`      // client or server
-	Transport      string            `json:"transport"` // tcp-client, tcp-server, udp, serial
+	Transport      string            `json:"transport"` // tcp-client, tcp-server, serial
 	Address        string            `json:"address"`
 	LocalAddress   string            `json:"localAddress"`
 	Unit           byte              `json:"unit"`
@@ -120,9 +119,7 @@ func (c *Channel) Defaults() {
 	}
 	if c.Devices == nil {
 		c.Devices = []Device{}
-		if c.Protocol != "raw" {
-			c.Devices = append(c.Devices, Device{ID: "device-1", Name: "装置 1", Unit: c.Unit, CommonAddress: c.CommonAddress, Points: append([]Point{}, c.Points...)})
-		}
+		c.Devices = append(c.Devices, Device{ID: "device-1", Name: "装置 1", Unit: c.Unit, CommonAddress: c.CommonAddress, Points: append([]Point{}, c.Points...)})
 	}
 	for i := range c.Devices {
 		if c.Devices[i].Points == nil {
@@ -136,21 +133,13 @@ func (c *Channel) Defaults() {
 }
 
 func (c Channel) Validate() error {
-	if c.RawTools != nil {
-		if c.Protocol != "raw" {
-			return errors.New("报文自动化配置仅适用于RAW通道")
-		}
-		if err := validateRawTools(*c.RawTools); err != nil {
-			return err
-		}
-	}
 	if strings.TrimSpace(c.Name) == "" {
 		return errors.New("通道名称不能为空")
 	}
 	if c.Role != "client" && c.Role != "server" {
 		return errors.New("请选择主站或子站")
 	}
-	if c.Protocol != "raw" && c.Protocol != "modbus-tcp" && c.Protocol != "modbus-rtu" && c.Protocol != "iec104" {
+	if c.Protocol != "modbus-tcp" && c.Protocol != "modbus-rtu" && c.Protocol != "iec104" {
 		return errors.New("不支持的协议")
 	}
 	if c.Protocol == "modbus-tcp" || c.Protocol == "iec104" {
@@ -162,7 +151,7 @@ func (c Channel) Validate() error {
 		return errors.New("Modbus RTU 需要串口或 TCP 字节流通道")
 	}
 	switch c.Transport {
-	case "tcp-client", "tcp-server", "udp":
+	case "tcp-client", "tcp-server":
 		if err := checkAddress(c.Address, c.Transport == "tcp-server"); err != nil {
 			return err
 		}
@@ -189,9 +178,6 @@ func (c Channel) Validate() error {
 	}
 	if c.Protocol == "iec104" && len(c.Devices) > 1 {
 		return errors.New("按原版规则，IEC104 每通道仅保留一个装置")
-	}
-	if c.Protocol == "raw" && len(c.Devices) > 0 {
-		return errors.New("RAW 通道不包含规约装置")
 	}
 	ids := map[string]bool{}
 	addresses := map[uint16]bool{}

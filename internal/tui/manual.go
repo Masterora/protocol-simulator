@@ -6,8 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"gytest-go/internal/core"
 )
@@ -28,6 +26,7 @@ type pointEditor struct {
 	dirty     [2]bool
 	replace   [2]bool
 	focus     int
+	caret     textCursor
 	error     string
 }
 
@@ -63,12 +62,8 @@ func (m *model) manualTarget(action string) (manualOperation, core.Point, bool) 
 		m.setOperationNotice("请选择有效点位")
 		return operation, p, false
 	}
-	protocol, role := "", ""
-	for _, c := range m.detail.View.Channels {
-		if c.ID == m.channel {
-			protocol, role = c.Protocol, c.Role
-		}
-	}
+	channel := m.selectedChannel()
+	protocol, role := channel.Protocol, channel.Role
 	allowed := protocol == "iec104" && (p.Kind == "yx" || p.Kind == "yc") || strings.HasPrefix(protocol, "modbus-") && (p.Kind == "coil" || p.Kind == "discrete" || p.Kind == "holding" || p.Kind == "input")
 	if role != "server" || !allowed {
 		m.setOperationNotice("只支持子站数据点，不下发遥控、遥调")
@@ -78,8 +73,41 @@ func (m *model) manualTarget(action string) (manualOperation, core.Point, bool) 
 		m.setOperationNotice("Modbus 由主站读取，不支持主动上报")
 		return operation, p, false
 	}
+	if action == "report" && channel.State.ReadyPeers == 0 {
+		m.setOperationNotice(iec104ReportStatus(channel.State))
+		return operation, p, false
+	}
 	operation = manualOperation{m.socket, core.ManualPointRequest{Channel: m.channel, Device: m.device, Kind: p.Kind, Address: p.Address, Metadata: m.detail.View.Metadata, Action: action}}
 	return operation, p, true
+}
+
+func (m *model) selectedChannel() core.InspectChannel {
+	for _, channel := range m.detail.View.Channels {
+		if channel.ID == m.channel {
+			return channel
+		}
+	}
+	return core.InspectChannel{}
+}
+
+func iec104ReportStatus(state core.ChannelState) string {
+	switch {
+	case state.ReadyPeers > 0:
+		return "IEC104 已激活，可上报"
+	case state.Status == "stopped" || state.Status == "error":
+		return "未上报：请在通道页启动通道"
+	case state.Peers > 0:
+		return "未上报：等待主站发送 STARTDT"
+	default:
+		return "未上报：等待主站连接"
+	}
+}
+
+func (m *model) reportShortcut() string {
+	if m.selectedChannel().State.ReadyPeers == 0 {
+		return "[s]上报状态"
+	}
+	return "[s]上报"
 }
 func (m *model) beginPointEdit() {
 	operation, p, ok := m.manualTarget("set")
@@ -105,34 +133,19 @@ func (m *model) editKey(key string) {
 	}
 	i := e.focus
 	switch key {
-	case " ", "left", "right":
+	case " ":
 		choices := m.manualChoices(i)
 		if len(choices) == 0 {
 			return
 		}
-		apply := func(v string) { e.values[i] = v; e.dirty[i] = true; e.replace[i] = true; e.error = "" }
-		if key == " " {
-			label := "数值"
-			field := "value"
-			if i == 1 {
-				label = "品质"
-				field = "quality"
-			}
-			m.openChoices(label, field, e.values[i], choices, apply)
-			return
+		label, field := "数值", "value"
+		if i == 1 {
+			label, field = "品质", "quality"
 		}
-		j := 0
-		for n, v := range choices {
-			if v == e.values[i] {
-				j = n
-				break
-			}
-		}
-		step := 1
-		if key == "left" {
-			step = -1
-		}
-		apply(choices[(j+len(choices)+step)%len(choices)])
+		m.openChoices(label, field, e.values[i], choices, func(v string) {
+			e.values[i], e.dirty[i], e.replace[i] = v, true, true
+			e.caret, e.error = textCursor{}, ""
+		})
 		return
 	case "esc":
 		m.editor = nil
@@ -140,20 +153,8 @@ func (m *model) editKey(key string) {
 	case "tab", "down", "up", "shift-tab":
 		e.focus = 1 - e.focus
 		e.replace[e.focus] = true
+		e.caret = textCursor{}
 		return
-	case "ctrl-u":
-		e.values[i] = ""
-		e.dirty[i] = true
-		e.replace[i] = false
-	case "backspace":
-		if e.replace[i] {
-			e.values[i] = ""
-		} else if len(e.values[i]) > 0 {
-			runes := []rune(e.values[i])
-			e.values[i] = string(runes[:len(runes)-1])
-		}
-		e.dirty[i] = true
-		e.replace[i] = false
 	case "enter":
 		request := e.operation.request
 		if e.dirty[0] {
@@ -188,23 +189,11 @@ func (m *model) editKey(key string) {
 		m.operationBusy = true
 		return
 	default:
-		r, _ := utf8.DecodeRuneInString(key)
-		used := len(e.values[i])
-		if e.replace[i] {
-			used = 0
+		if e.caret.key(&e.values[i], &e.replace[i], key, 64) {
+			e.dirty[i] = true
+			e.error = ""
 		}
-		if utf8.RuneCountInString(key) != 1 || unicode.IsControl(r) || used+len(key) > 64 {
-			return
-		}
-		if e.replace[i] {
-			e.values[i] = ""
-		}
-		e.values[i] += key
-		e.dirty[i] = true
-		e.replace[i] = false
-
 	}
-	e.error = ""
 }
 func (m *model) applyManual(reply manualReply) {
 	m.operationBusy = false
@@ -258,7 +247,9 @@ func (m *model) editorBody(width int) []string {
 			prefix = "› "
 		}
 		value := e.values[i]
-		if len(m.manualChoices(i)) > 0 {
+		if i == e.focus {
+			value = e.caret.render(value, min(width-7, 108)-12)
+		} else if len(m.manualChoices(i)) > 0 {
 			field := "value"
 			if i == 1 {
 				field = "quality"
@@ -270,22 +261,18 @@ func (m *model) editorBody(width int) []string {
 	target := clipped(fmt.Sprintf("%s · %s:%d", e.name, translated(e.operation.request.Kind, kindLabels), e.operation.request.Address), min(width-7, 108)-4, false)
 	lines := append([]string{target}, fields...)
 	if e.error != "" {
-		lines = []string{target, clipped(e.error, min(width-7, 108)-4, false), fields[e.focus], fields[1-e.focus]}
+		return []string{target, clipped("错误 "+e.error, min(width-7, 108)-4, false), fields[0], fields[1]}
+	}
+	if e.operation.request.Persist != nil && *e.operation.request.Persist {
+		lines = append(lines, "修改会保存到工程 JSON。")
+	} else {
+		lines = append(lines, "仅修改运行值。")
 	}
 	for _, p := range m.detail.View.Points {
 		if p.Kind == e.operation.request.Kind && p.Address == e.operation.request.Address {
 			lines = append(lines, fmt.Sprintf("当前值 %g · 品质 %d", p.Value, p.Quality))
 			break
 		}
-	}
-	lines = append(lines, "", "空格打开选项；Tab/Shift+Tab 或 ↑↓ 切换字段。", "自动规则继续运行，新值按实际变化同步。")
-	if e.operation.request.Persist != nil && *e.operation.request.Persist {
-		lines = append(lines, "显式修改同时保存到工程 JSON。")
-	} else {
-		lines = append(lines, "旧服务仅修改运行值，不保存配置文件。")
-	}
-	if m.operationBusy {
-		lines = append([]string{"正在提交，请等待实际结果…"}, lines...)
 	}
 	return lines
 }

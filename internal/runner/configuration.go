@@ -221,6 +221,9 @@ func (s *configurationState) configure(ctx context.Context, req projectfile.Requ
 	if current.Revision != s.doc.Revision {
 		return view, result, projectfile.ErrConflict
 	}
+	if req.Resource == "point-table" {
+		return s.configurePointTable(ctx, req)
+	}
 	if req.Action == "read" {
 		view, err = projectfile.ReadView(s.doc, req)
 		return view, result, err

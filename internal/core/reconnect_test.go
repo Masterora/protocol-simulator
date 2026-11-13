@@ -27,7 +27,7 @@ func TestTCPClientWaitsReconnectsAndStops(t *testing.T) {
 	reserve.Close()
 	e := NewEngine()
 	defer e.StopAll()
-	id, err := e.UpsertChannel(Channel{Name: "waiting", Protocol: "raw", Role: "client", Transport: "tcp-client", Address: address, TimeoutMS: 100})
+	id, err := e.UpsertChannel(Channel{Name: "waiting", Protocol: "modbus-tcp", Devices: []Device{}, Role: "client", Transport: "tcp-client", Address: address, TimeoutMS: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestTCPClientWaitsReconnectsAndStops(t *testing.T) {
 
 func TestStopCancelsPendingTCPDial(t *testing.T) {
 	e := NewEngine()
-	id, err := e.UpsertChannel(Channel{Name: "pending", Protocol: "raw", Role: "client", Transport: "tcp-client", Address: "192.0.2.1:2425", TimeoutMS: 30000})
+	id, err := e.UpsertChannel(Channel{Name: "pending", Protocol: "modbus-tcp", Devices: []Device{}, Role: "client", Transport: "tcp-client", Address: "192.0.2.1:2425", TimeoutMS: 30000})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,4 +2,4 @@
 
 package main
 
-func makeEditorAccessory() {}
+func presentEditorWindow() {}

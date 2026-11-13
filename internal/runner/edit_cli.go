@@ -45,14 +45,14 @@ func findProjectSocket(ctx context.Context, dir string, pid int) (string, observ
 }
 func configurationCommand(ctx context.Context, resource string, args []string, out, stderr io.Writer) int {
 	fail := func(code int, err error) int { fmt.Fprintln(stderr, err); return code }
-	if len(args) == 0 {
-		return fail(2, errors.New("请指定 new/add/edit/delete/start/stop 操作；使用 prs help 查看用法"))
+	if len(args) == 0 || isHelp(args[0]) {
+		printResourceHelp(out, resource)
+		return 0
 	}
 	action := args[0]
 	args = args[1:]
-	if action == "help" || action == "--help" || action == "-h" {
-		fmt.Fprintln(out, "prs "+resource+" add|edit|delete --pid PID|--file PROJECT [--channel ID --device ID --kind TYPE --address N --index N] --set FIELD=VALUE [--json]")
-		return 0
+	if !supportsAction(resource, action) {
+		return fail(2, fmt.Errorf("不支持操作 %q，请运行 prs %s --help 查看用法", action, resource))
 	}
 	var positional string
 	if resource == "project" && action == "new" && len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -60,23 +60,23 @@ func configurationCommand(ctx context.Context, resource string, args []string, o
 		args = args[1:]
 	}
 	fs := flag.NewFlagSet(resource+" "+action, flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	pid := fs.Int("pid", 0, "running project PID")
-	file := fs.String("file", positional, "project JSON file (offline edit)")
-	dir := fs.String("runtime-dir", observe.RuntimeDir(), "project socket directory")
-	channel := fs.String("channel", "", "channel ID")
-	device := fs.String("device", "", "device ID")
-	id := fs.String("id", "", "channel/device ID to edit")
-	kind := fs.String("kind", "", "existing point kind")
-	address := fs.String("address", "", "existing point address")
-	index := fs.Int("index", 0, "rule number, starting at 1")
-	name := fs.String("name", "", "new project name")
-	start := fs.Bool("start", false, "start independent project with stopped channels")
-	asJSON := fs.Bool("json", false, "JSON output")
-	revision := fs.String("revision", "", "expected file revision; defaults to a fresh read")
+	pid := fs.Int("pid", 0, "运行中的工程`进程号`")
+	file := fs.String("file", positional, "工程 JSON `文件`路径，用于离线编辑")
+	dir := fs.String("runtime-dir", observe.RuntimeDir(), "工程观测套接字所在`目录`")
+	channel := fs.String("channel", "", "通道`标识`")
+	device := fs.String("device", "", "装置`标识`")
+	id := fs.String("id", "", "通道或装置`标识`，作为 --channel 或 --device 的别名")
+	kind := fs.String("kind", "", "点位`类型`")
+	address := fs.String("address", "", "十进制或十六进制`点位`")
+	index := fs.Int("index", 0, "规则`序号`，从 1 开始")
+	name := fs.String("name", "", "工程`名称`")
+	start := fs.Bool("start", false, "保存后启动独立的空工程")
+	asJSON := fs.Bool("json", false, "以 JSON 格式输出")
+	revision := fs.String("revision", "", "预期配置`修订号`，省略时读取当前修订号")
 	var sets assignments
-	fs.Var(&sets, "set", "field=value; repeat for multiple fields")
-	if err := fs.Parse(args); err != nil {
+	fs.Var(&sets, "set", "设置`字段=值`，可重复指定")
+	syntax, visible := configurationHelp(resource, action)
+	if err := parseFlags(fs, args, out, stderr, syntax, visible...); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
@@ -102,7 +102,7 @@ func configurationCommand(ctx context.Context, resource string, args []string, o
 		if err != nil {
 			return fail(1, err)
 		}
-		result := projectfile.Result{Saved: true, Path: doc.Path, Revision: doc.Revision, Message: "新工程已保存；通道保持停止"}
+		result := projectfile.Result{Saved: true, Path: doc.Path, Revision: doc.Revision, Message: "空工程已保存"}
 		payload := map[string]any{"result": result}
 		if *start {
 			child, err := instance.Start(ctx, doc.Path, *dir)
@@ -122,9 +122,6 @@ func configurationCommand(ctx context.Context, resource string, args []string, o
 			fmt.Fprintln(out, result.Message+"："+doc.Path)
 		}
 		return 0
-	}
-	if action != "add" && action != "edit" && action != "start" && action != "stop" && action != "delete" {
-		return fail(2, errors.New("仅支持 add/edit/delete/start/stop"))
 	}
 	if *name != "" || *start {
 		return fail(2, errors.New("--name 和 --start 只用于 project new"))

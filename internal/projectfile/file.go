@@ -94,7 +94,7 @@ func Create(path, name string) (Document, error) {
 	if strings.TrimSpace(name) == "" || len([]rune(name)) > 100 {
 		return Document{}, errors.New("工程名称应为 1–100 字")
 	}
-	p := core.Project{Version: 2, Name: name, Channels: []core.Channel{DefaultChannel("通道1")}}
+	p := core.Project{Version: 2, Name: name, Channels: []core.Channel{}}
 	data, err := Encode(p)
 	if err != nil {
 		return Document{}, err

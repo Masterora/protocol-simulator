@@ -33,11 +33,11 @@ func TestNativeWindowSmoke(t *testing.T) {
 	}
 	a.native = n
 	t.Cleanup(n.close)
-	id, err := a.engine.UpsertChannel(core.Channel{Name: "native smoke", Protocol: "raw", Role: "client", Transport: "tcp-client", Address: "127.0.0.1:2404"})
+	id, err := a.engine.UpsertChannel(core.Channel{Name: "native smoke", Protocol: "modbus-tcp", Devices: []core.Device{}, Role: "client", Transport: "tcp-client", Address: "127.0.0.1:2404"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, kind := range []string{"channel-dialog", "device-dialog", "manager-dialog", "point-dialog", "confirm-dialog", "control-dialog", "control-step", "control-setpoint", "auto-yk-dialog", "auto-yt-dialog", "auto-bulk-dialog", "auto-data-dialog", "events-dialog", "device-client-modbus", "device-server-iec104", "device-server-modbus", "data-test-yx-modbus", "remote-yk-iec104", "remote-yt-iec104", "remote-yk-modbus", "remote-yt-modbus", "telemetry-values-yx", "telemetry-values-yc", "auto-yk-modbus", "auto-yt-modbus", "point-table-dialog", "packet-tools-dialog", "toolbox-dialog"} {
+	for _, kind := range []string{"channel-dialog", "device-dialog", "manager-dialog", "point-dialog", "confirm-dialog", "control-dialog", "control-step", "control-setpoint", "auto-yk-dialog", "auto-yt-dialog", "auto-bulk-dialog", "auto-data-dialog", "events-dialog", "device-client-modbus", "device-server-iec104", "device-server-modbus", "data-test-yx-modbus", "remote-yk-iec104", "remote-yt-iec104", "remote-yk-modbus", "remote-yt-modbus", "telemetry-values-yx", "telemetry-values-yc", "auto-yk-modbus", "auto-yt-modbus", "point-table-dialog", "toolbox-dialog"} {
 		scenario := kind
 		if filter := os.Getenv("GYLAB_NATIVE_SCENARIO"); filter != "" && filter != scenario {
 			continue
@@ -63,7 +63,7 @@ func TestNativeWindowSmoke(t *testing.T) {
 		if strings.HasPrefix(scenario, "data-") {
 			kind = "auto-data-dialog"
 		}
-		// Point editor needs a protocol device, while other editors may use RAW.
+		// Point editor needs a protocol device, while other editors can use an empty channel.
 		deviceID := ""
 		if kind == "point-dialog" || kind == "control-dialog" || kind == "point-table-dialog" || isAutoWindow(kind) {
 			devices := a.engine.Snapshot().Project.Channels[0].Devices
@@ -98,23 +98,12 @@ func TestNativeWindowSmoke(t *testing.T) {
 			if strings.Contains(scenario, "iec104") {
 				group = "iec104"
 			}
-			channelID, e := a.engine.UpsertChannel(core.Channel{Name: scenario, Protocol: "raw", Role: role, Transport: "tcp-client", Address: "127.0.0.1:2404"})
+			channelID, e := a.engine.UpsertChannel(core.Channel{Name: scenario, Protocol: "modbus-tcp", Devices: []core.Device{}, Role: role, Transport: "tcp-client", Address: "127.0.0.1:2404"})
 			if e != nil {
 				t.Fatal(e)
 			}
 			c.Role, c.Channel = role, channelID
 			c.Draft = []byte(fmt.Sprintf(`{"window":{"group":%q,"version":%q},"panels":[]}`, group, map[string]string{"iec104": "标准版", "modbus": "TCP版"}[group]))
-		}
-		if kind == "packet-tools-dialog" {
-			channelID, e := a.engine.UpsertChannel(core.Channel{Name: "packet tools", Protocol: "raw", Role: "client", Transport: "tcp-client", Address: "127.0.0.1:2404"})
-			if e != nil {
-				t.Fatal(e)
-			}
-			c.Channel = channelID
-			c.Device = ""
-			if err := a.engine.SaveRawTools(channelID, core.RawToolsConfig{Framing: "fixed", FrameLength: 2, IntervalMS: 1000, Cycles: 3, Replies: []core.RawReplyRule{{Enabled: true, Match: "01 03", Response: "01 03 02 00 2A", Format: "hex"}}, Rows: []core.RawSendRow{{Enabled: true, Data: "01 03", Format: "hex"}}}); err != nil {
-				t.Fatal(err)
-			}
 		}
 		if kind == "auto-data-dialog" {
 			protocol := "iec104"

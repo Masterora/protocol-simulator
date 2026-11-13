@@ -83,7 +83,7 @@ func TestRemovedRuleStopKeyAndCurrentCapability(t *testing.T) {
 }
 
 func TestDisplayAlwaysRefreshesAfterFormerPauseKeys(t *testing.T) {
-	for view := 0; view < len(viewNames); view++ {
+	for view := range viewLabels {
 		for _, detail := range []bool{false, true} {
 			m := ruleModel("running")
 			m.view, m.detailOpen = view, detail

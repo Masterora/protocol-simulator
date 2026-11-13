@@ -277,8 +277,8 @@ func TestLastDeviceRemovalStopsChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot := e.Snapshot()
-	if snapshot.States[0].Status != "stopped" || snapshot.Project.Channels[0].Protocol != "raw" || len(snapshot.Project.Channels[0].Devices) != 0 {
-		t.Fatal("removing last device must stop channel and clear protocol")
+	if snapshot.States[0].Status != "stopped" || snapshot.Project.Channels[0].Protocol != "modbus-tcp" || len(snapshot.Project.Channels[0].Devices) != 0 {
+		t.Fatal("removing last device must stop channel and retain the protocol")
 	}
 }
 
@@ -321,7 +321,7 @@ func TestDisabledDeviceSettingsRetainDraftWithoutBlockingSave(t *testing.T) {
 func TestDeviceOverlapValidationDoesNotDisconnectOrModifyExistingData(t *testing.T) {
 	e, id := func() (*Engine, string) {
 		e := NewEngine()
-		id, err := e.UpsertChannel(Channel{Name: "s", Protocol: "raw", Role: "server", Transport: "tcp-server", Address: "127.0.0.1:0"})
+		id, err := e.UpsertChannel(Channel{Name: "s", Protocol: "modbus-tcp", Devices: []Device{}, Role: "server", Transport: "tcp-server", Address: "127.0.0.1:0"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -441,7 +441,7 @@ func Test104ConfiguredPartialFrameTimeoutKeepsIdleConnectionOpen(t *testing.T) {
 
 func TestOriginalConfigurationBuildsIndependentPointTables(t *testing.T) {
 	e := NewEngine()
-	id, err := e.UpsertChannel(Channel{Name: "通道0", Protocol: "raw", Role: "server", Transport: "tcp-server", Address: "127.0.0.1:0"})
+	id, err := e.UpsertChannel(Channel{Name: "通道0", Protocol: "modbus-tcp", Devices: []Device{}, Role: "server", Transport: "tcp-server", Address: "127.0.0.1:0"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,7 +518,7 @@ func TestClientAdjustmentRangePreservesTelemetryAndPersists(t *testing.T) {
 	for _, protocol := range []string{"iec104", "modbus-tcp"} {
 		t.Run(protocol, func(t *testing.T) {
 			e := NewEngine()
-			channel, err := e.UpsertChannel(Channel{Name: "client", Protocol: "raw", Role: "client", Transport: "tcp-client", Address: "127.0.0.1:2404"})
+			channel, err := e.UpsertChannel(Channel{Name: "client", Protocol: "modbus-tcp", Devices: []Device{}, Role: "client", Transport: "tcp-client", Address: "127.0.0.1:2404"})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -58,7 +58,7 @@ npm ci
 python scripts/package_protocol.py
 ```
 
-构建脚本执行协议、界面、打包及原生窗口检查，记录源码、二进制和日志身份。macOS 还检查串口 PTY、竞态和 Windows 交叉构建；Windows 使用 `build/windows/resources.ps1` 调用与 macOS 交叉构建共用的资源工具。版本号仅在 `wails.json` 的 `info.productVersion` 中维护，应用元数据、Windows 数字/字符串版本、清单和 Setup 均由此生成。原生检查覆盖28个有效场景，合并窗口的历史入口不重复测试。
+构建脚本执行协议、界面、打包及原生窗口检查，记录源码、二进制和日志身份。macOS 还检查串口 PTY、竞态和 Windows 交叉构建；Windows 使用 `build/windows/resources.ps1` 调用与 macOS 交叉构建共用的资源工具。版本号仅在 `wails.json` 的 `info.productVersion` 中维护，应用元数据、Windows 数字/字符串版本、清单和 Setup 均由此生成。原生检查覆盖 27 个有效场景，合并窗口的历史入口不重复测试。
 
 `outputs/` 发布 macOS、Windows 安装包及 Linux 对应架构的服务器压缩包和桌面 DEB。macOS 包为 `protocol-simulator.dmg`，Windows 包为 `protocol-simulator-Setup.exe`。macOS 镜像包含 Universal `.app` 和 Applications 快捷入口；指南、示例、许可和构建摘要位于“资料”文件夹。暂存文件位于 `work/`，打包完成后清理。
 

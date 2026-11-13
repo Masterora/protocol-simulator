@@ -1,6 +1,7 @@
 package projectfile
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"gytest-go/internal/core"
@@ -8,6 +9,109 @@ import (
 	"strconv"
 	"strings"
 )
+
+const DefaultDevicePointCount = 50
+
+func DevicePointKinds(protocol string) []string {
+	if strings.HasPrefix(protocol, "modbus-") {
+		return []string{"discrete", "holding", "coil", "input"}
+	}
+	return []string{"yx", "yc", "yk", "yt", "mc", "position", "step"}
+}
+
+func DevicePointStart(protocol, kind string) uint32 {
+	if strings.HasPrefix(protocol, "modbus-") {
+		switch kind {
+		case "discrete":
+			return 1
+		case "holding":
+			return 1024
+		case "coil":
+			return 2560
+		}
+		return 0
+	}
+	switch kind {
+	case "yx":
+		return 1
+	case "yc":
+		return 16385
+	case "yk":
+		return 24577
+	case "step":
+		return 24833
+	case "yt":
+		return 25089
+	case "mc":
+		return 25601
+	case "position":
+		return 4097
+	}
+	return 0
+}
+
+func initialDevicePoints(protocol string, raw json.RawMessage) ([]core.Point, error) {
+	var selections map[string]string
+	if err := json.Unmarshal(raw, &selections); err != nil || selections == nil {
+		return nil, errors.New("初始点表应为点位类型和范围组成的 JSON 对象")
+	}
+	kinds := DevicePointKinds(protocol)
+	maxAddress := uint32(0xffffff)
+	if strings.HasPrefix(protocol, "modbus-") {
+		maxAddress = 65535
+	}
+	points := []core.Point{}
+	for _, kind := range kinds {
+		selection := strings.TrimSpace(selections[kind])
+		delete(selections, kind)
+		if selection == "" {
+			continue
+		}
+		addresses, err := core.ParsePointSelection(selection, maxAddress)
+		if err != nil {
+			return nil, fmt.Errorf("初始点表（%s）：%w", kind, err)
+		}
+		if len(points)+len(addresses) > 10000 {
+			return nil, errors.New("各类型合计最多 10000 个初始点位")
+		}
+		for _, address := range addresses {
+			points = append(points, core.Point{Kind: kind, Address: address, Name: fmt.Sprintf("点位%d", len(points)+1)})
+		}
+	}
+	if len(selections) != 0 {
+		return nil, errors.New("初始点表含当前协议不支持的点位类型")
+	}
+	return points, nil
+}
+
+func defaultDevice(c *core.Channel) (core.Device, error) {
+	if c.Protocol == "iec104" && len(c.Devices) > 0 {
+		return core.Device{}, errors.New("此 IEC104 通道已有装置。编辑现有装置，或新增通道后再添加装置")
+	}
+	names, units := map[string]bool{}, map[uint8]bool{}
+	for _, d := range c.Devices {
+		names[d.Name], units[d.Unit] = true, true
+	}
+	n := 1
+	for names[fmt.Sprintf("装置%d", n)] {
+		n++
+	}
+	limit := 255
+	if c.Protocol == "modbus-rtu" {
+		limit = 247
+	}
+	unit := 1
+	for unit <= limit && units[uint8(unit)] {
+		unit++
+	}
+	if unit > limit {
+		if c.Protocol == "modbus-rtu" && c.Role == "server" || units[0] {
+			return core.Device{}, errors.New("通道已无可用站号，请选择其他通道")
+		}
+		unit = 0
+	}
+	return core.Device{Name: fmt.Sprintf("装置%d", n), Unit: uint8(unit), CommonAddress: 1, Points: []core.Point{}}, nil
+}
 
 func DefaultView(doc Document, req Request) (View, error) {
 	v := View{Path: doc.Path, Revision: doc.Revision, Resource: req.Resource}
@@ -42,29 +146,22 @@ func DefaultView(doc Document, req Request) (View, error) {
 	}
 	v.Protocol = c.Protocol
 	if req.Resource == "device" {
-		if c.Protocol == "raw" {
-			return v, errors.New("RAW 通道不包含装置")
+		d, err := defaultDevice(c)
+		if err != nil {
+			return v, err
 		}
-		if c.Protocol == "iec104" && len(c.Devices) > 0 {
-			return v, errors.New("IEC104 每通道一个装置，请新增通道")
-		}
-		units, addresses := map[int]bool{}, map[int]bool{}
-		for _, d := range c.Devices {
-			units[int(d.Unit)] = true
-			addresses[int(d.CommonAddress)] = true
-		}
-		unit, ca := 1, 1
-		for units[unit] {
-			unit++
-		}
-		for addresses[ca] {
-			ca++
-		}
-		kind, start := "yc", 1
+		kind := "yc"
 		if strings.HasPrefix(c.Protocol, "modbus-") {
-			kind, start = "holding", 0
+			kind = "holding"
 		}
-		v.Value = Fields(map[string]any{"name": fmt.Sprintf("装置%d", len(c.Devices)+1), "unit": unit, "commonAddress": ca, "pointCount": 50, "pointKind": kind, "pointStart": start})
+		start := DevicePointStart(c.Protocol, kind)
+		initialPoints := map[string]string{}
+		for _, pointKind := range DevicePointKinds(c.Protocol) {
+			first := DevicePointStart(c.Protocol, pointKind)
+			initialPoints[pointKind] = fmt.Sprintf("%d-%d", first, first+DefaultDevicePointCount-1)
+		}
+		v.Value = Fields(map[string]any{"name": d.Name, "unit": d.Unit, "commonAddress": d.CommonAddress, "pointCount": DefaultDevicePointCount, "pointKind": kind, "pointStart": start,
+			"initialPoints": initialPoints})
 		return v, nil
 	}
 	d, err := device(c, req.Device)

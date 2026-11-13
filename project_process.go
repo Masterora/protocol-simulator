@@ -17,7 +17,6 @@ import (
 const projectWindowArg = "--protocol-project="
 
 type projectWindowConfig struct {
-	Raw  bool   `json:"raw,omitempty"`
 	Name string `json:"name"`
 	Role string `json:"role"`
 }
@@ -28,17 +27,7 @@ func projectForWindow(config projectWindowConfig) (core.Project, error) {
 		return core.Project{}, errors.New("工程名称应为 1–100 字")
 	}
 	staged := core.NewEngine()
-	if config.Raw {
-		transport, address := "tcp-client", "127.0.0.1:2404"
-		if config.Role == "server" {
-			transport, address = "tcp-server", "127.0.0.1:24040"
-		} else if config.Role != "client" {
-			return core.Project{}, errors.New("请选择主站或子站")
-		}
-		if _, err := staged.UpsertChannel(core.Channel{Name: "通道1", Role: config.Role, Protocol: "raw", Transport: transport, Address: address}); err != nil {
-			return core.Project{}, err
-		}
-	} else if err := staged.EnsureWorkspaceChannel(config.Role); err != nil {
+	if err := staged.EnsureWorkspaceChannel(config.Role); err != nil {
 		return core.Project{}, err
 	}
 	project := staged.Snapshot().Project

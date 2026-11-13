@@ -10,16 +10,13 @@ import (
 
 func deletionProject(t *testing.T) (core.Project, string, string) {
 	t.Helper()
-	doc, err := Create(filepath.Join(t.TempDir(), "project.json"), "Delete test")
+	c := DefaultChannel("通道1")
+	project := core.Project{Version: 2, Name: "Delete test", Channels: []core.Channel{c}}
+	p, r, err := Apply(project, Request{Action: "add", Resource: "device", Channel: c.ID, Fields: Fields(map[string]any{"pointCount": 2})})
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := doc.Project.Channels[0].ID
-	p, r, err := Apply(doc.Project, Request{Action: "add", Resource: "device", Channel: c, Fields: Fields(map[string]any{"pointCount": 2})})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return p, c, r.Device
+	return p, c.ID, r.Device
 }
 func TestDeleteResourcesRejectReferencesAndPreserveUnchangedSource(t *testing.T) {
 	p, c, d := deletionProject(t)

@@ -57,6 +57,10 @@
                   d="M28 14a11 11 0 0 0-19-5L5 13M5 6v7h7M6 22a11 11 0 0 0 19 5l4-4M22 23h7v7"
                 ></path></svg
               ><span>更新</span></button
+            ><button id="open-field-tools" class="ribbon-button"
+              ><svg viewBox="0 0 34 36" aria-hidden="true">
+                <path d="M5 6h24v10H5zM5 20h24v10H5zM9 11h2m-2 14h2"></path></svg
+              ><span>服务器</span></button
             ><button id="open-toolbox" class="ribbon-button"
               ><svg viewBox="0 0 34 36" aria-hidden="true">
                 <path d="M4 12h26v19H4zM11 12V6h12v6M4 20h26M15 18h4v5h-4z"></path></svg
@@ -168,7 +172,6 @@
               ><div class="panel-title"
                 ><span class="panel-mark">⌁</span><h2>报文窗口</h2
                 ><span id="message-badge" class="badge">0</span></div
-              ><button id="open-packet-tools" type="button">自动化</button
               ><button
                 id="pause-messages"
                 type="button"
@@ -205,19 +208,6 @@
                   ><tr><th>时间</th><th>方向</th><th>内容</th></tr></thead
                 ><tbody id="message-rows"></tbody></table
               ><div id="message-empty" class="message-empty">暂无报文</div></div
-            ><form id="raw-form" class="raw-send"
-              ><label class="raw-label"
-                ><select id="raw-format" aria-label="发送格式"
-                  ><option value="hex">HEX</option
-                  ><option value="text">UTF-8文本</option></select
-                ></label
-              ><input
-                id="raw-hex"
-                placeholder="十六进制报文"
-                autocomplete="off"
-                aria-label="十六进制报文"
-              /><label class="check"><input type="checkbox" id="append-crc" />CRC16</label
-              ><button class="primary" type="submit">发送</button></form
             ></section
           >
           <div
@@ -260,8 +250,7 @@
             >通信协议<select name="protocol"
               ><option value="iec104">IEC 60870-5-104</option
               ><option value="modbus-tcp">Modbus TCP</option
-              ><option value="modbus-rtu">Modbus RTU</option
-              ><option value="raw">RAW 原始报文</option></select
+              ><option value="modbus-rtu">Modbus RTU</option></select
             ></label
           ><label
             >站点角色<select name="role"
@@ -272,7 +261,6 @@
             >连接方式<select name="transport"
               ><option value="tcp-client">TCP Client</option
               ><option value="tcp-server">TCP Server</option
-              ><option value="udp">UDP</option
               ><option value="serial">串口</option></select
             ></label
           ><label
@@ -730,95 +718,109 @@
           ><button id="point-table-export" data-save-action type="button">导出点表</button></div
         ></section
       ></dialog
-    ><dialog id="packet-tools-dialog" class="desktop-feature-dialog"
-      ><section
-        ><div class="dialog-heading"
-          ><h2>报文自动化</h2
-          ><button type="button" data-close="packet-tools-dialog" aria-label="关闭">×</button></div
-        ><p class="form-error" hidden></p
-        ><div id="packet-editor"
-          ><div class="feature-toolbar"
-            ><label
-              >接收分帧<select id="packet-framing"
-                ><option value="idle">静默间隔</option
-                ><option value="fixed">固定长度</option
-                ><option value="delimiter">结束符</option
-                ><option value="chunk">接收块</option></select
+    ><dialog id="field-tools-dialog" class="desktop-feature-dialog">
+      <section>
+        <div class="dialog-heading"
+          ><h2>服务器</h2><form method="dialog"><button aria-label="关闭">×</button></form></div
+        >
+        <nav class="tool-navigation" aria-label="服务器操作">
+          <button type="button" data-field-panel="field-ssh">SSH 查看</button>
+          <button type="button" data-field-panel="field-frames">报文日志</button>
+          <button type="button" data-field-panel="field-check">部署检查</button>
+        </nav>
+        <p class="form-error" role="alert" hidden></p>
+        <div id="field-frames" class="field-panel" hidden>
+          <div class="feature-toolbar">
+            <button id="field-open-frames" type="button">导入报文日志</button>
+            <label>时间、通道或内容<input id="field-filter" type="search" /></label>
+            <label
+              >方向<select id="field-direction"
+                ><option value="">全部</option
+                ><option value="RX">接收</option
+                ><option value="TX">发送</option></select
               ></label
-            ><label
-              >静默间隔(ms)<input
-                id="packet-idle"
-                type="number"
-                min="5"
-                max="5000"
-                value="30" /></label
-            ><label
-              >固定帧长(字节)<input
-                id="packet-length"
-                type="number"
-                min="1"
-                max="4096"
-                value="1" /></label
-            ><label>结束符(HEX)<input id="packet-delimiter" value="0D0A" /></label></div
-          ><div class="feature-heading"
-            ><h3>自动应答</h3
-            ><button id="packet-add-reply" type="button" aria-label="添加应答规则">＋</button></div
-          ><div class="feature-table-scroll packet-table"
-            ><table
-              ><thead
-                ><tr
-                  ><th></th><th>启用</th><th>识别起始字节</th><th>识别内容(HEX)</th><th>应答报文</th
-                  ><th>格式</th><th>追加校验</th><th>延迟(ms)</th><th>操作</th></tr
-                ></thead
-              ><tbody id="packet-replies"></tbody></table></div
-          ><div class="feature-heading"
-            ><h3>循环发送</h3
-            ><button id="packet-add-send" type="button" aria-label="添加发送报文">＋</button></div
-          ><div class="feature-table-scroll packet-table"
-            ><table
-              ><thead
-                ><tr
-                  ><th></th><th>启用</th><th>发送报文</th><th>格式</th><th>追加校验</th
-                  ><th>操作</th></tr
-                ></thead
-              ><tbody id="packet-sends"></tbody></table></div
-          ><div class="feature-toolbar"
-            ><label
-              >指定序号<input
-                id="packet-selection"
-                placeholder="留空发送全部启用行；如2,1,3-5" /></label
-            ><label
-              >报文间隔(ms)<input
-                id="packet-interval"
-                type="number"
-                min="10"
-                max="86400000"
-                value="1000" /></label
-            ><label
-              >循环周期(ms)<input
-                id="packet-cycle"
-                type="number"
-                min="0"
-                max="86400000"
-                value="0" /></label
-            ><label
-              >循环次数(0为持续)<input
-                id="packet-cycles"
-                type="number"
-                min="0"
-                max="1000000"
-                value="1" /></label></div></div
-        ><p class="feature-note"
-          >识别起始字节从0开始，首条匹配规则生效；UDP按数据报分帧。配置保存在工程中，任务需手动启动，关闭此窗口不会停止任务。</p
-        ><div class="feature-task-status"
-          ><button id="packet-reply-toggle" type="button">启动</button><span>自动应答</span
-          ><span id="packet-reply-status" role="status"></span
-          ><button id="packet-send-toggle" type="button">启动</button><span>循环发送</span
-          ><span id="packet-send-status" role="status"></span></div
-        ><div class="dialog-actions"
-          ><button id="packet-save" data-save-action type="button">保存配置</button></div
-        ></section
-      ></dialog
+            >
+            <label
+              >解析协议<select id="field-protocol"
+                ><option value="iec104">IEC104</option
+                ><option value="tcp">Modbus TCP</option
+                ><option value="rtu">Modbus RTU</option></select
+              ></label
+            >
+            <label id="field-transaction-wrap" hidden
+              >报文类型<select id="field-transaction"
+                ><option value="request">请求</option
+                ><option value="response">响应</option></select
+              ></label
+            >
+          </div>
+          <div class="feature-table-scroll field-scroll"
+            ><table>
+              <thead
+                ><tr><th>时间</th><th>通道</th><th>方向</th><th>对端</th><th>摘要</th></tr></thead
+              >
+              <tbody id="field-rows"></tbody> </table
+          ></div>
+          <div class="feature-toolbar"
+            ><button id="field-prev" type="button">上一页</button><span id="field-page"></span
+            ><button id="field-next" type="button">下一页</button></div
+          >
+          <div id="field-frame-detail" hidden>
+            <div>
+              <div class="field-detail-heading"
+                ><label for="field-hex">原始报文</label
+                ><button id="field-copy-hex" type="button">复制</button></div
+              >
+              <textarea id="field-hex" rows="4" readonly></textarea>
+            </div>
+            <div><h3>解析结果</h3><pre id="field-decoded" class="field-result"></pre></div>
+          </div>
+        </div>
+        <div id="field-check" class="field-panel" hidden>
+          <div class="feature-toolbar">
+            <label>服务器网卡 IP<input id="field-ip" type="text" /></label>
+            <label class="field-checkbox"
+              ><input id="field-rules" type="checkbox" />启动自动数据规则</label
+            >
+            <button id="field-run-check" type="button">检查当前工程</button>
+          </div>
+          <pre id="field-check-output" class="field-result" aria-live="polite"></pre>
+        </div>
+        <div id="field-ssh" class="field-panel" hidden>
+          <form id="field-ssh-form" class="feature-toolbar">
+            <label>SSH 主机<select id="field-host"></select></label>
+            <button id="field-run-ssh" class="primary" type="submit">读取状态</button>
+            <button
+              id="field-manage-hosts"
+              type="button"
+              aria-expanded="false"
+              aria-controls="field-host-editor"
+              >管理主机</button
+            >
+            <span id="field-ssh-status" role="status"></span>
+          </form>
+          <form id="field-host-editor" class="feature-toolbar" hidden>
+            <label id="field-import-host-wrap" hidden
+              >导入 OpenSSH 主机
+              <select id="field-import-host"></select>
+            </label>
+            <label>显示名称<input id="field-host-name" type="text" maxlength="80" /></label>
+            <label
+              >连接目标<input
+                id="field-host-target"
+                placeholder="主机别名或 user@host"
+                type="text"
+                required
+                maxlength="255"
+                spellcheck="false"
+            /></label>
+            <button id="field-host-save" type="submit">保存</button>
+            <button id="field-host-new" type="button">新增</button>
+            <button id="field-host-remove" type="button">移除</button>
+          </form>
+          <div id="field-ssh-output" aria-live="polite"></div>
+        </div>
+      </section> </dialog
     ><dialog id="toolbox-dialog" class="desktop-feature-dialog"
       ><section
         ><div class="dialog-heading"
@@ -828,13 +830,13 @@
         ><div class="feature-toolbar"
           ><label id="tool-kind-wrap" hidden
             >工具<select id="tool-kind"
-              ><option value="number">数值转换</option
-              ><option value="encoding">编码转换</option
-              ><option value="string">文本处理</option
               ><option value="time">时间戳</option
               ><option value="iec104">IEC104协议解析</option>
               ><option value="modbus">Modbus 报文</option
-              ><option value="network">IPv4 网段</option></select
+              ><option value="number">数值转换</option
+              ><option value="network">IPv4 网段</option
+              ><option value="encoding">编码转换</option
+              ><option value="string">文本处理</option></select
             ></label
           ><label id="tool-protocol-wrap" hidden
             >协议<select id="tool-protocol">
@@ -892,19 +894,6 @@
               <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
                 <path d="M8.5 2.5h4v11h-9v-5m-1-3h6m-2-2 2 2-2 2" />
               </svg>
-            </button>
-            <button
-              id="toolbox-run"
-              data-save-action
-              type="button"
-              class="primary tool-icon-button"
-              aria-label="转换"
-              aria-keyshortcuts="Control+Enter Meta+Enter"
-              title="转换"
-            >
-              <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-                <path d="M5 3v10l7-5z" />
-              </svg>
             </button> </div></div
         ><div id="tool-read-fields" class="feature-toolbar" hidden
           ><label>站号<input id="tool-read-unit" inputmode="numeric" maxlength="3" /></label
@@ -926,8 +915,27 @@
           ><div id="tool-source" class="tool-source"
             ><label id="tool-input-wrap"
               ><span id="tool-input-label">整数</span
-              ><textarea id="tool-input" spellcheck="false"></textarea></label></div
-          ><div id="tool-result-pane" class="tool-result-pane"
+              ><textarea
+                id="tool-input"
+                aria-describedby="tool-error"
+                spellcheck="false"
+              ></textarea></label></div
+          ><div id="tool-run-between" class="tool-run-between">
+            <button
+              id="toolbox-run"
+              data-save-action
+              type="button"
+              class="primary tool-icon-button"
+              aria-label="转换"
+              aria-keyshortcuts="Control+Enter Meta+Enter"
+              title="转换"
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                <path d="M5 3v10l7-5z" />
+              </svg>
+            </button>
+          </div>
+          <div id="tool-result-pane" class="tool-result-pane"
             ><div class="tool-result-heading"
               ><h3 id="tool-output-label">结果</h3
               ><div class="tool-actions">
@@ -967,7 +975,7 @@
                     <path d="M10 3.5v-1H2.5V11h1" />
                   </svg>
                 </button> </div></div
-            ><p class="form-error" role="alert" hidden></p
+            ><p id="tool-error" class="form-error" role="alert" hidden></p
             ><textarea
               id="tool-output"
               aria-labelledby="tool-output-label"

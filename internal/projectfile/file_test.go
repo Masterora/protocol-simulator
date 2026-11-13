@@ -27,8 +27,16 @@ func TestCreateEditRoundTripPreservesDeviceMetadataAndRejectsStaleWrites(t *test
 	if runtime.GOOS != "windows" && originalInfo.Mode().Perm() != 0600 {
 		t.Fatal("unexpected permissions on new project", originalInfo.Mode())
 	}
-	c := doc.Project.Channels[0]
-	next, result, err := Apply(doc.Project, Request{Resource: "device", Action: "add", Channel: c.ID, Fields: Fields(map[string]any{"pointCount": 3, "name": "装置甲"})})
+	empty, err := Read(path)
+	if err != nil || empty.Project.Channels == nil || len(empty.Project.Channels) != 0 || len(doc.Project.Channels) != 0 {
+		t.Fatal("new project must contain an empty channel array", empty, err)
+	}
+	withChannel, channelResult, err := Apply(doc.Project, Request{Resource: "channel", Action: "add"})
+	if err != nil || len(withChannel.Channels) != 1 || withChannel.Channels[0].Name != "通道1" {
+		t.Fatal("first explicit channel was not created", withChannel, err)
+	}
+	c := channelResult.Channel
+	next, result, err := Apply(withChannel, Request{Resource: "device", Action: "add", Channel: c, Fields: Fields(map[string]any{"pointCount": 3, "name": "装置甲"})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +61,7 @@ func TestCreateEditRoundTripPreservesDeviceMetadataAndRejectsStaleWrites(t *test
 	if len(d.DataTests) != 0 || d.AutoData != nil {
 		t.Fatal("generated unsolicited data rules")
 	}
-	next, _, err = Apply(loaded.Project, Request{Resource: "point", Action: "edit", Channel: c.ID, Device: d.ID, Point: &core.PointKey{Kind: "yc", Address: 1}, Fields: Fields(map[string]any{"name": "电压", "wireType": 36, "value": 220.5})})
+	next, _, err = Apply(loaded.Project, Request{Resource: "point", Action: "edit", Channel: c, Device: d.ID, Point: &core.PointKey{Kind: "yc", Address: 1}, Fields: Fields(map[string]any{"name": "电压", "wireType": 36, "value": 220.5})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,8 +118,12 @@ func TestConcurrentRevisionCheckedWritersCannotLoseAcceptedUpdate(t *testing.T) 
 }
 func TestInvalidPointAndRuleEditsDoNotTouchOriginalFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "p.json")
-	doc, _ := Create(path, "p")
-	c := doc.Project.Channels[0]
+	doc, err := Create(path, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := DefaultChannel("通道1")
+	doc.Project.Channels = []core.Channel{c}
 	p, r, err := Apply(doc.Project, Request{Resource: "device", Action: "add", Channel: c.ID, Fields: Fields(map[string]any{"pointCount": 2})})
 	if err != nil {
 		t.Fatal(err)
@@ -133,9 +145,9 @@ func TestInvalidPointAndRuleEditsDoNotTouchOriginalFile(t *testing.T) {
 	}
 }
 func TestPointAddressEditProtectsExistingAutomaticRuleReferences(t *testing.T) {
-	doc, _ := Create(filepath.Join(t.TempDir(), "p.json"), "p")
-	c := doc.Project.Channels[0]
-	p, r, err := Apply(doc.Project, Request{Resource: "device", Action: "add", Channel: c.ID, Fields: Fields(map[string]any{"pointCount": 2})})
+	c := DefaultChannel("通道1")
+	project := core.Project{Version: 2, Name: "p", Channels: []core.Channel{c}}
+	p, r, err := Apply(project, Request{Resource: "device", Action: "add", Channel: c.ID, Fields: Fields(map[string]any{"pointCount": 2})})
 	if err != nil {
 		t.Fatal(err)
 	}

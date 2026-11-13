@@ -41,6 +41,10 @@ def main():
             for source, name in ((root / 'THIRD-PARTY.txt', 'THIRD-PARTY.txt'), (root / 'README.md', 'README.md')):
                 shutil.copy2(source, stage / name)
             shutil.copytree(root / 'examples', stage / 'examples')
+            manual = root / 'build/linux/prs.1'
+            manual_dir = stage / 'share/man/man1'
+            manual_dir.mkdir(parents=True)
+            shutil.copy2(manual, manual_dir)
             (stage / 'systemd').mkdir()
             shutil.copy2(root / 'build/linux/protocol-simulator@.service', stage / 'systemd/protocol-simulator@.service')
             report = {'version': version, 'architecture': architecture, 'platform': 'linux', 'command': 'prs',
@@ -55,6 +59,7 @@ def main():
                 extracted = tar.extractfile('protocol-simulator-server/bin/prs').read()
                 assert hashlib.sha256(extracted).hexdigest() == report['binarySHA256']
                 assert tar.getmember('protocol-simulator-server/bin/prs').mode & 0o111
+                assert tar.extractfile('protocol-simulator-server/share/man/man1/prs.1').read() == manual.read_bytes()
                 assert tar.extractfile('protocol-simulator-server/systemd/protocol-simulator@.service').read() == (root / 'build/linux/protocol-simulator@.service').read_bytes()
             report.update(archive=archive.name, archiveSHA256=digest(archive))
             reports.append(report)

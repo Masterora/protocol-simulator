@@ -16,13 +16,18 @@ type PointOperationResult struct {
 }
 
 func (e *Engine) ReadDeviceModbusPoints(channel, device string, fc byte, selection string) (PointOperationResult, error) {
-	return e.modbusPointOperation(channel, device, fc, selection, 0, false)
+	return e.OperateDeviceModbusPoints(context.Background(), channel, device, fc, selection, nil)
 }
 func (e *Engine) WriteDeviceModbusPoints(channel, device string, fc byte, selection string, value uint16) (PointOperationResult, error) {
-	return e.modbusPointOperation(channel, device, fc, selection, value, true)
+	return e.OperateDeviceModbusPoints(context.Background(), channel, device, fc, selection, &value)
 }
 
-func (e *Engine) modbusPointOperation(channel, device string, fc byte, selection string, writeValue uint16, write bool) (PointOperationResult, error) {
+func (e *Engine) OperateDeviceModbusPoints(ctx context.Context, channel, device string, fc byte, selection string, requestedValue *uint16) (PointOperationResult, error) {
+	write := requestedValue != nil
+	var writeValue uint16
+	if write {
+		writeValue = *requestedValue
+	}
 	points, err := ParsePointSelection(selection, 65535)
 	if err != nil {
 		return PointOperationResult{}, err
@@ -116,7 +121,7 @@ func (e *Engine) modbusPointOperation(channel, device string, fc byte, selection
 			next += count
 		}
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	owner := "points/" + newID()
 	release, err := e.reserveAuto(ctx, cancel, s, owner)

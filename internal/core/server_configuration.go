@@ -17,6 +17,7 @@ type ServerPointHint struct {
 	Channel, Device string
 	Old, Next       *PointKey
 	Fields          map[string]bool
+	Imported        map[PointKey]bool
 }
 
 func TelemetryConfiguration(d Device) AutoDataConfig {
@@ -165,10 +166,15 @@ func (e *Engine) ApplyServerConfiguration(previous, next Project, hint ServerPoi
 				p := &d.Points[pi]
 				key := PointKey{p.Kind, p.Address}
 				originalKey := key
-				force := map[string]bool{}
-				if hint.Channel == c.ID && hint.Device == d.ID && hint.Old != nil && hint.Next != nil && *hint.Next == key {
-					originalKey = *hint.Old
-					force = hint.Fields
+				var force map[string]bool
+				if hint.Channel == c.ID && hint.Device == d.ID {
+					if hint.Imported[key] {
+						continue
+					}
+					if hint.Old != nil && hint.Next != nil && *hint.Next == key {
+						originalKey = *hint.Old
+						force = hint.Fields
+					}
 				}
 				old, known := oldPoints[originalKey]
 				live, exists := livePoints[originalKey]

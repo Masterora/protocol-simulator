@@ -18,26 +18,27 @@ import (
 
 func pointCommand(ctx context.Context, args []string, out, stderr io.Writer) int {
 	fail := func(code int, err error) int { fmt.Fprintln(stderr, err); return code }
-	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		fmt.Fprintln(out, "prs point set|report --pid PID --channel ID --device ID --kind TYPE --address N [--value N] [--quality N] [--runtime-dir DIR] [--json]")
-		return 0
-	}
 	if len(args) == 0 || args[0] != "set" && args[0] != "report" {
-		return fail(2, errors.New("usage: prs point set|report --pid PID --channel ID --device ID --kind TYPE --address N [--value N] [--quality N] [--json]"))
+		return fail(2, errors.New("请运行 prs point --help 查看点位操作"))
 	}
 	fs := flag.NewFlagSet("point "+args[0], flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	runtimeOnly := fs.Bool("runtime-only", false, "change live value without saving project JSON")
-	pid := fs.Int("pid", 0, "running project PID")
-	dir := fs.String("runtime-dir", observe.RuntimeDir(), "project socket directory")
-	channel := fs.String("channel", "", "channel ID")
-	device := fs.String("device", "", "device ID")
-	kind := fs.String("kind", "", "point kind")
-	address := fs.String("address", "", "decimal or hexadecimal address")
-	value := fs.String("value", "", "new runtime value")
-	quality := fs.String("quality", "", "quality byte (0..255)")
-	asJSON := fs.Bool("json", false, "JSON output")
-	if err := fs.Parse(args[1:]); err != nil {
+	runtimeOnly := fs.Bool("runtime-only", false, "仅修改运行值，默认保存到工程文件")
+	pid := fs.Int("pid", 0, "运行中的工程`进程号`")
+	dir := fs.String("runtime-dir", observe.RuntimeDir(), "工程观测套接字所在`目录`")
+	channel := fs.String("channel", "", "通道`标识`")
+	device := fs.String("device", "", "装置`标识`")
+	kind := fs.String("kind", "", "点位`类型`")
+	address := fs.String("address", "", "十进制或十六进制`点位`")
+	value := fs.String("value", "", "要设置的`数值`")
+	quality := fs.String("quality", "", "要设置的`品质`，范围为 0–255")
+	asJSON := fs.Bool("json", false, "以 JSON 格式输出")
+	visible := []string{"pid", "channel", "device", "kind", "address"}
+	if args[0] == "set" {
+		visible = append(visible, "value", "quality", "runtime-only")
+	}
+	visible = append(visible, "runtime-dir", "json")
+	syntax := "prs point " + args[0] + " --pid <进程号> --channel <通道标识> --device <装置标识> --kind <类型> --address <点位> [选项]"
+	if err := parseFlags(fs, args[1:], out, stderr, syntax, visible...); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}

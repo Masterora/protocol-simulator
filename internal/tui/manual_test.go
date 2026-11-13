@@ -70,7 +70,7 @@ func TestPointSummaryAndPaginationCountsAreHiddenWhenSearching(t *testing.T) {
 				t.Fatal(retired, plain)
 			}
 		}
-		if !strings.HasPrefix(lines[4], "┌ 点位 ") || !strings.HasPrefix(lines[6], "│› 1 ") {
+		if !strings.HasPrefix(lines[5], "┌ 点位 ") || !strings.HasPrefix(lines[7], "│› 1 ") {
 			t.Fatal("unlabelled row number or table moved", plain)
 		}
 	}
